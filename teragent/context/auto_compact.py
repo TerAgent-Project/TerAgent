@@ -1,0 +1,313 @@
+# teragent/context/auto_compact.py
+"""AutoCompactor — 自动上下文压缩器
+
+参考 Claude-Code 的 Autocompact + Reactive Compact 策略：
+  - 当对话接近 Token 上限时，自动压缩早期对话为摘要
+  - 保留最近 N 轮对话，将更早的对话压缩为结构化摘要
+  - 熔断器保护：连续压缩失败后停止尝试
+  - 单次会话压缩次数上限，防止无限循环
+
+设计原则：
+  - 保留近期对话（最近 4 轮 = 8 条消息）
+  - 摘要包含 5 个必填维度（需求、完成、决策、问题、文件）
+  - 压缩后对话连贯性由摘要保证
+  - 系统消息不参与压缩（每次重新注入）
+"""
+
+import logging
+import time
+from typing import Optional, TYPE_CHECKING
+
+from teragent.context.context_window import ContextWindow
+from teragent.core.types import Message, MessageRole, MessageType
+
+if TYPE_CHECKING:
+    from teragent.core.provider import ModelProvider
+
+logger = logging.getLogger(__name__)
+
+
+class AutoCompactor:
+    """自动上下文压缩器 — 当接近 Token 限制时压缩历史对话
+
+    使用场景：
+      1. AgentLoop._tool_loop 每步开头调用 maybe_compact()
+      2. 如果 should_compact() 返回 True，执行压缩
+      3. 压缩后消息列表缩短，Token 使用率下降
+
+    压缩流程：
+      1. 将消息列表分为「早期」（需压缩）和「近期」（保留原样）
+      2. 将早期消息格式化为文本
+      3. 调用 LLM 生成结构化摘要
+      4. 用摘要消息替换早期消息
+      5. 合并为新的消息列表
+
+    安全机制：
+      - 熔断器：连续 2 次压缩失败后停止
+      - 次数上限：单次会话最多 5 次压缩
+      - 消息数下限：消息太少时不压缩
+    """
+
+    # 保留的最近消息数量（8 条 = 4 轮 user+assistant）
+    RETAIN_COUNT: int = 8
+
+    # 单次会话最大压缩次数
+    MAX_COMPACTS: int = 5
+
+    # 连续压缩失败后停止的阈值
+    MAX_CONSECUTIVE_FAILURES: int = 2
+
+    # 摘要中每条消息保留的最大字符数
+    SUMMARY_MSG_MAX_CHARS: int = 300
+
+    # 摘要输入的最大总字符数
+    SUMMARY_INPUT_MAX_CHARS: int = 12_000
+
+    def __init__(
+        self,
+        context_window: ContextWindow,
+        model: "ModelProvider",
+        retain_count: int = 8,
+        max_compacts: int = 5,
+    ) -> None:
+        self.context_window = context_window
+        self.model = model
+        self.retain_count = retain_count
+        self.max_compacts = max_compacts
+
+        self._compact_count: int = 0
+        self._consecutive_failures: int = 0
+
+        # 历史摘要列表（用于 /status 展示）
+        self._compact_history: list[dict] = []
+
+    @property
+    def compact_count(self) -> int:
+        """当前会话已执行的压缩次数"""
+        return self._compact_count
+
+    @property
+    def last_compact_info(self) -> Optional[dict]:
+        """最近一次压缩的信息"""
+        return self._compact_history[-1] if self._compact_history else None
+
+    async def maybe_compact(
+        self,
+        messages: list[Message],
+        system_prompt: str = "",
+    ) -> list[Message]:
+        """检查并执行上下文压缩
+
+        Args:
+            messages: 当前对话消息列表（不含系统消息）
+            system_prompt: 当前系统提示（用于传递给摘要模型）
+
+        Returns:
+            压缩后的消息列表（可能不变）
+        """
+        # 不需要压缩
+        if not self.context_window.should_compact(messages):
+            return messages
+
+        # 次数上限
+        if self._compact_count >= self.max_compacts:
+            logger.warning(
+                f"Autocompact limit reached ({self._compact_count}/{self.max_compacts})"
+            )
+            return messages
+
+        # 熔断器：连续失败后停止
+        if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+            logger.warning(
+                "Autocompact circuit breaker: too many consecutive failures"
+            )
+            return messages
+
+        # 消息数太少，压缩无意义
+        if len(messages) <= self.retain_count + 2:
+            return messages
+
+        # 执行压缩
+        try:
+            compacted = await self._do_compact(messages, system_prompt)
+            self._compact_count += 1
+            self._consecutive_failures = 0
+
+            compact_info = {
+                "count": self._compact_count,
+                "before_messages": len(messages),
+                "after_messages": len(compacted),
+                "before_tokens": self.context_window.last_estimated_tokens,
+                "timestamp": time.time(),
+            }
+            self._compact_history.append(compact_info)
+
+            logger.info(
+                f"Autocompact #{self._compact_count}: "
+                f"{len(messages)} messages → {len(compacted)} messages, "
+                f"~{self.context_window.last_estimated_tokens} tokens before"
+            )
+            return compacted
+
+        except Exception as e:
+            self._consecutive_failures += 1
+            logger.error(f"Autocompact failed (failure #{self._consecutive_failures}): {e}")
+            return messages
+
+    async def _do_compact(
+        self,
+        messages: list[Message],
+        system_prompt: str = "",
+    ) -> list[Message]:
+        """执行上下文压缩
+
+        策略：
+          1. 保留最近 RETAIN_COUNT 条消息
+          2. 将更早的消息压缩为结构化摘要
+          3. 摘要消息 + 近期消息 = 新消息列表
+        """
+        to_compact = messages[: -self.retain_count]
+        to_retain = messages[-self.retain_count :]
+
+        # 生成摘要
+        summary = await self._generate_summary(to_compact)
+
+        # Phase 7.3: 构建摘要消息 — 使用 Message.context_summary
+        summary_content = (
+            f"[上下文摘要 — 自动压缩 #{self._compact_count + 1}]\n\n"
+            f"以下是之前对话的关键信息摘要：\n\n{summary}\n\n"
+            f"--- 以上为摘要，以下是最新对话 ---"
+        )
+        summary_message = Message.context_summary(summary_content)
+
+        return [summary_message, *to_retain]
+
+    async def _generate_summary(self, messages: list[Message]) -> str:
+        """使用 LLM 生成对话摘要
+
+        摘要包含 5 个必填维度：
+          1. 用户的需求和目标
+          2. 已完成的工作和结果
+          3. 重要的决策和原因
+          4. 当前的问题和待解决事项
+          5. 关键文件和代码变更
+        """
+        conversation_text = self._format_for_summary(messages)
+
+        prompt = (
+            "请用中文总结以下对话中的关键信息。"
+            "必须包含以下 5 个维度：\n\n"
+            "1. **用户需求**：用户想要什么？目标是什么？\n"
+            "2. **已完成工作**：已经做了什么？结果如何？\n"
+            "3. **重要决策**：做出了哪些关键选择？为什么？\n"
+            "4. **当前问题**：还有什么未解决？遇到了什么障碍？\n"
+            "5. **关键文件**：涉及哪些文件？有哪些代码变更？\n\n"
+            f"对话内容：\n{conversation_text}"
+        )
+
+        response = await self.model.chat(
+            messages=[{"role": "user", "content": prompt}]
+        )
+        summary = response.get("content", "").strip()
+
+        if not summary:
+            # LLM 返回空，使用简单拼接作为备用
+            summary = self._fallback_summary(messages)
+
+        return summary
+
+    def _format_for_summary(self, messages: list[Message]) -> str:
+        """将消息列表格式化为摘要输入文本
+
+        每条消息截断到 SUMMARY_MSG_MAX_CHARS，总长度限制在
+        SUMMARY_INPUT_MAX_CHARS 以内。
+
+        Phase 7.3: 使用 Message 属性直接访问，不再通过 dict .get()
+        """
+        parts = []
+        total_chars = 0
+
+        for msg in messages:
+            # 跳过系统消息（每次都会重新注入）
+            if msg.role == MessageRole.SYSTEM:
+                continue
+
+            # Phase 7.3: 直接访问 Message 属性
+            role = msg.role.value
+            content = str(msg.content) if msg.content else ""
+
+            # 截断单条消息
+            if len(content) > self.SUMMARY_MSG_MAX_CHARS:
+                content = content[: self.SUMMARY_MSG_MAX_CHARS] + "..."
+
+            # 处理 tool_calls（简要描述）
+            if msg.tool_calls:
+                tc_names = [
+                    tc.get("function", {}).get("name", "?") for tc in msg.tool_calls
+                ]
+                content = f"[调用工具: {', '.join(tc_names)}] {content}"
+
+            part = f"[{role}]: {content}"
+            parts.append(part)
+            total_chars += len(part)
+
+            # 超过总长度限制则停止
+            if total_chars >= self.SUMMARY_INPUT_MAX_CHARS:
+                parts.append("... (更多对话已省略)")
+                break
+
+        return "\n".join(parts)
+
+    def _fallback_summary(self, messages: list[Message]) -> str:
+        """LLM 摘要失败时的备用摘要 — 提取关键信息
+
+        Phase 7.3: 使用 Message 属性直接访问
+        """
+        user_msgs = []
+        tool_calls = []
+        assistant_msgs = []
+
+        for msg in messages:
+            content = str(msg.content)[:200] if msg.content else ""
+
+            if msg.role == MessageRole.USER:
+                user_msgs.append(content)
+            elif msg.role == MessageRole.ASSISTANT:
+                assistant_msgs.append(content)
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        tool_calls.append(
+                            tc.get("function", {}).get("name", "?")
+                        )
+
+        summary_parts = []
+        if user_msgs:
+            summary_parts.append(
+                f"用户需求: {user_msgs[0]}"
+            )
+        if tool_calls:
+            unique_tools = list(dict.fromkeys(tool_calls))  # 去重保序
+            summary_parts.append(
+                f"使用的工具: {', '.join(unique_tools)}"
+            )
+        if assistant_msgs:
+            summary_parts.append(
+                f"助手最近回复: {assistant_msgs[-1]}"
+            )
+
+        return "\n".join(summary_parts) if summary_parts else "（摘要生成失败，对话信息已丢失）"
+
+    def get_stats(self) -> dict:
+        """返回压缩器统计信息（供 /status 使用）"""
+        return {
+            "compact_count": self._compact_count,
+            "max_compacts": self.max_compacts,
+            "consecutive_failures": self._consecutive_failures,
+            "last_compact": self.last_compact_info,
+        }
+
+    def reset(self) -> None:
+        """重置压缩器状态（新会话时调用）"""
+        self._compact_count = 0
+        self._consecutive_failures = 0
+        self._compact_history.clear()

@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+*.tmp
+.agent/
+.teragent/
+
+# ============================================================
+# API Key Security (Phase 9)
+# Never commit files that may contain API keys!
+# ============================================================
+
+# Environment variables (API keys)
+.env
+.env.local
+.env.*.local
+
+# Audit database (may contain sensitive info)
+.audit.db
+
+# Session data (may contain conversation history)
+.teragent/sessions/

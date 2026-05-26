@@ -1,0 +1,1065 @@
+# teragent/agent_loop.py
+"""AgentLoop — The central orchestration class that drives the tool-calling loop.
+
+Composes all existing modules and provides the main agent interaction loop.
+
+Architecture (tool loop pattern):
+  1. User sends a message
+  2. IntentClassifier determines intent (CHAT / DEBUG / CREATE_PROJECT)
+  3. If CREATE_PROJECT, ConfirmationGate asks for user approval
+  4. Filter tools by intent (from AgentLoopConfig.intent_tools)
+  5. Call model (streaming or batch depending on mode)
+  6. If model returns tool_calls, execute them
+     (via StreamingToolExecutor or ToolOrchestrator)
+  7. Add tool results to messages
+  8. Loop back to step 5 until: no tool_calls, step budget exhausted,
+     or max steps reached
+  9. Context compaction at each iteration before model call (proactive, not reactive)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Any, AsyncIterator, Optional
+
+from teragent.config.agent_loop_config import AgentLoopConfig
+from teragent.core.provider import ModelProvider
+from teragent.core.types import Message, MessageRole, MessageType
+from teragent.tools.registry import ToolRegistry
+from teragent.tools.orchestrator import ToolOrchestrator
+from teragent.tools.base import ToolResult
+from teragent.streaming.streaming_executor import (
+    StreamingToolExecutor,
+    StreamingExecutionStats,
+)
+from teragent.streaming.stream_events import StreamEvent, StreamEventType
+from teragent.event_bus import EventBus
+from teragent.context.context_window import ContextWindow
+from teragent.context.auto_compact import AutoCompactor
+from teragent.reliability.budget import StepBudget
+from teragent.reliability.circuit_breaker import CircuitBreakerManager
+from teragent.reliability.recovery import RecoveryManager, RecoveryType
+from teragent.security.permission import EnhancedPermissionManager
+from teragent.intent.classifier import IntentClassifier, IntentType
+from teragent.intent.confirmation import ConfirmationGate
+from teragent.coordination.message_bus import AgentMessageBus, AgentMessage, BROADCAST
+from teragent.coordination.sub_agent_manager import SubAgentManager, AgentMode
+from teragent.hooks.manager import HookManager
+from teragent.session.persistence import SessionPersistence
+
+logger = logging.getLogger(__name__)
+
+
+class AgentLoop:
+    """The central orchestration class that drives the tool-calling loop.
+
+    Composes ModelProvider, ToolRegistry, and all cross-cutting concerns
+    (reliability, context, security, intent, streaming, etc.) into a
+    single cohesive agent interaction loop.
+
+    Usage::
+
+        loop = AgentLoop(
+            model=provider,
+            tool_registry=registry,
+            config=AgentLoopConfig(),
+        )
+        messages = await loop.run("帮我写一个贪吃蛇游戏")
+    """
+
+    def __init__(
+        self,
+        model: ModelProvider,
+        tool_registry: ToolRegistry,
+        config: AgentLoopConfig | None = None,
+        event_bus: EventBus | None = None,
+        context_window: ContextWindow | None = None,
+        auto_compactor: AutoCompactor | None = None,
+        step_budget: StepBudget | None = None,
+        circuit_breaker: CircuitBreakerManager | None = None,
+        recovery_manager: RecoveryManager | None = None,
+        permission_manager: EnhancedPermissionManager | None = None,
+        intent_classifier: IntentClassifier | None = None,
+        confirmation_gate: ConfirmationGate | None = None,
+        message_bus: AgentMessageBus | None = None,
+        sub_agent_manager: SubAgentManager | None = None,
+        hook_manager: HookManager | None = None,
+        session_persistence: SessionPersistence | None = None,
+        streaming_executor: StreamingToolExecutor | None = None,
+    ) -> None:
+        # --- Core dependencies ---
+        self._model = model
+        self._tool_registry = tool_registry
+        self._config = config or AgentLoopConfig()
+
+        # --- Optional cross-cutting components ---
+        self._event_bus = event_bus
+        self._context_window = context_window
+        self._auto_compactor = auto_compactor
+        self._step_budget = step_budget
+        self._circuit_breaker = circuit_breaker
+        self._recovery_manager = recovery_manager
+        self._permission_manager = permission_manager
+        self._intent_classifier = intent_classifier
+        self._confirmation_gate = confirmation_gate
+        self._message_bus = message_bus
+        self._sub_agent_manager = sub_agent_manager
+        self._hook_manager = hook_manager
+        self._session_persistence = session_persistence
+        self._streaming_executor = streaming_executor
+
+        # --- Validate config ---
+        validation_warnings = self._config.validate()
+        if validation_warnings:
+            for w in validation_warnings:
+                logger.warning(f"AgentLoopConfig: {w}")
+
+        # --- Internal tool orchestrator (always created) ---
+        self._tool_orchestrator = ToolOrchestrator(
+            tool_registry=tool_registry,
+            permission_level=0,
+            hook_manager=hook_manager,
+            enhanced_perm_manager=permission_manager,
+        )
+
+        # --- Streaming mode state ---
+        self._streaming_mode: str = "auto"  # "auto" | "streaming" | "batch"
+        self._max_streaming_retries: int = self._config.max_streaming_retries
+
+        # --- Permission level ---
+        self._permission_level: int = 0
+
+        # --- Recovery stats ---
+        self._recovery_stats: dict[str, Any] = {
+            "streaming_mode": self._streaming_mode,
+            "streaming_retries": 0,
+            "batch_fallbacks": 0,
+            "truncation_recoveries": 0,
+            "context_compactions": 0,
+        }
+
+        # --- Loop metrics ---
+        self._total_steps: int = 0
+        self._total_model_calls: int = 0
+
+        # --- Streaming tool results buffer ---
+        # Populated by _call_model_streaming(), consumed by _tool_loop()
+        self._streaming_tool_results: list[tuple[dict, ToolResult]] = []
+
+    # ==================================================================
+    # Properties
+    # ==================================================================
+
+    @property
+    def streaming_mode(self) -> str:
+        """Returns current streaming mode: "auto" | "streaming" | "batch"."""
+        return self._streaming_mode
+
+    @property
+    def model(self) -> ModelProvider:
+        """Returns the ModelProvider."""
+        return self._model
+
+    @property
+    def tool_registry(self) -> ToolRegistry:
+        """Returns the ToolRegistry."""
+        return self._tool_registry
+
+    @property
+    def config(self) -> AgentLoopConfig:
+        """Returns the AgentLoopConfig."""
+        return self._config
+
+    # ==================================================================
+    # Streaming configuration
+    # ==================================================================
+
+    def set_streaming_config(
+        self,
+        mode: str | None = None,
+        max_streaming_retries: int | None = None,
+    ) -> None:
+        """Update streaming configuration at runtime.
+
+        Args:
+            mode: "auto" | "streaming" | "batch". None = unchanged.
+            max_streaming_retries: Max retry count. None = unchanged.
+        """
+        if mode is not None:
+            if mode in ("auto", "streaming", "batch"):
+                self._streaming_mode = mode
+            else:
+                # Invalid value → fallback to auto
+                self._streaming_mode = "auto"
+            self._recovery_stats["streaming_mode"] = self._streaming_mode
+
+        if max_streaming_retries is not None:
+            self._max_streaming_retries = max_streaming_retries
+
+    # ==================================================================
+    # Core entry point
+    # ==================================================================
+
+    async def run(
+        self,
+        user_input: str,
+        messages: list[Message] | None = None,
+        system_prompt: str = "",
+    ) -> list[Message]:
+        """Run the agent loop for a user input.
+
+        Full lifecycle:
+          1. Classify intent
+          2. If CREATE_PROJECT, confirm via gate
+          3. Filter tools by intent
+          4. Prepend/replace system prompt
+          5. If CREATE_PROJECT, delegate to SubAgentManager
+          6. Restore session state (if applicable)
+          7. Execute tool loop until done
+          8. Emit agent_done event
+          9. Persist session
+          10. Return updated message list
+
+        Args:
+            user_input: The user's input text
+            messages: Existing conversation messages (for continuation)
+            system_prompt: System prompt to prepend
+
+        Returns:
+            Updated message list including all new messages from this turn
+        """
+        start_time = time.time()
+
+        # Initialize message list
+        if messages is None:
+            messages = []
+        else:
+            messages = list(messages)
+
+        # 1. Append user message
+        user_msg = Message.user_input(user_input)
+        messages.append(user_msg)
+
+        # 2. Classify intent
+        intent = IntentType.CHAT  # default
+        if self._intent_classifier:
+            try:
+                intent = await self._intent_classifier.classify(user_input)
+            except Exception as e:
+                logger.warning(f"Intent classification failed: {e}, defaulting to CHAT")
+
+        # Emit intent classified event
+        if self._event_bus:
+            await self._event_bus.emit(
+                "intent_classified",
+                intent=intent.value,
+                user_input=user_input[:200],
+            )
+
+        logger.info(f"Intent classified: {intent.value} for: {user_input[:80]}")
+
+        # 3. If CREATE_PROJECT, ask for confirmation
+        if intent == IntentType.CREATE_PROJECT and self._confirmation_gate:
+            try:
+                confirmed = await self._confirmation_gate.confirm_create_project(
+                    user_input
+                )
+                if not confirmed:
+                    messages.append(
+                        Message.assistant_text("用户取消了项目创建。")
+                    )
+                    return messages
+            except Exception as e:
+                logger.warning(f"Confirmation gate error: {e}, proceeding anyway")
+
+        # 4. Filter tools by intent
+        allowed_tools = self._filter_tools_by_intent(intent)
+
+        # 5. Prepend system prompt if provided (replace existing, no accumulation)
+        if system_prompt:
+            has_system = False
+            for i, msg in enumerate(messages):
+                if hasattr(msg, 'role') and msg.role == MessageRole.SYSTEM:
+                    messages[i] = Message.system_prompt(system_prompt)
+                    has_system = True
+                    break
+                elif isinstance(msg, dict) and msg.get('role') == 'system':
+                    messages[i] = Message.system_prompt(system_prompt)
+                    has_system = True
+                    break
+            if not has_system:
+                messages.insert(0, Message.system_prompt(system_prompt))
+
+        # 5b. SubAgent delegation for CREATE_PROJECT intent
+        if intent == IntentType.CREATE_PROJECT and self._sub_agent_manager:
+            try:
+                result = await self._sub_agent_manager.spawn(
+                    task=user_input,
+                    mode=AgentMode.SYNC,
+                    parent_id="main_agent",
+                )
+                messages.append(Message.assistant_text(result))
+                logger.info(
+                    f"SubAgent completed CREATE_PROJECT task: "
+                    f"result_length={len(result)}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"SubAgent spawn failed, falling back to tool loop: {e}"
+                )
+                # Fall through to normal tool loop on SubAgent failure
+            else:
+                # SubAgent succeeded — skip tool loop, go to session persistence
+                elapsed = time.time() - start_time
+                if self._event_bus:
+                    await self._event_bus.emit(
+                        "agent_done",
+                        intent=intent.value,
+                        total_steps=self._total_steps,
+                        elapsed_seconds=round(elapsed, 2),
+                        final_message_count=len(messages),
+                    )
+
+                # Persist session (full lifecycle)
+                if self._session_persistence:
+                    try:
+                        session_id = self._session_persistence.get_current_session_id()
+                        if not session_id:
+                            session_id = self._session_persistence.create(
+                                title=user_input[:50],
+                                intent=intent.value if intent else "unknown",
+                            )
+                        for msg in messages:
+                            self._session_persistence.save_message(session_id, msg)
+                        self._session_persistence.update_step_count(
+                            session_id, self._total_steps
+                        )
+                    except Exception as e:
+                        logger.debug(f"Session persistence error: {e}")
+
+                return messages
+
+        # 5c. Session restore (before tool loop)
+        session_id = None
+        if self._session_persistence:
+            try:
+                session_id = self._session_persistence.get_current_session_id()
+                if not session_id:
+                    session_id = self._session_persistence.create(
+                        title=user_input[:50],
+                        intent=intent.value if intent else "unknown",
+                    )
+                # Restore from existing session if messages are empty
+                if not messages or len(messages) <= 1:
+                    existing = self._session_persistence.restore(session_id)
+                    if existing and len(existing) > 1:
+                        # Keep the newly appended user message, prepend restored
+                        messages = existing + messages
+            except Exception as e:
+                logger.debug(f"Session restore error: {e}")
+
+        # 6. Execute tool loop
+        try:
+            messages = await self._tool_loop(messages, allowed_tools, system_prompt)
+        except Exception as e:
+            logger.error(f"Agent loop error: {e}", exc_info=True)
+            messages.append(Message.system_error(f"Agent loop error: {e}"))
+
+        # 7. Emit agent_done event
+        elapsed = time.time() - start_time
+        if self._event_bus:
+            await self._event_bus.emit(
+                "agent_done",
+                intent=intent.value,
+                total_steps=self._total_steps,
+                elapsed_seconds=round(elapsed, 2),
+                final_message_count=len(messages),
+            )
+
+        logger.info(
+            f"Agent loop completed: intent={intent.value}, "
+            f"steps={self._total_steps}, "
+            f"elapsed={elapsed:.1f}s, "
+            f"messages={len(messages)}"
+        )
+
+        # 8. Persist session (full lifecycle — all messages + step count)
+        if self._session_persistence and session_id:
+            try:
+                for msg in messages:
+                    self._session_persistence.save_message(session_id, msg)
+                self._session_persistence.update_step_count(
+                    session_id, self._total_steps
+                )
+            except Exception as e:
+                logger.debug(f"Session persistence error: {e}")
+
+        return messages
+
+    # ==================================================================
+    # Core tool loop
+    # ==================================================================
+
+    async def _tool_loop(
+        self,
+        messages: list[Message],
+        allowed_tools: list[str],
+        system_prompt: str,
+    ) -> list[Message]:
+        """The core tool-calling loop.
+
+        Each iteration:
+          1. Check step budget
+          2. Check consecutive tool failures
+          3. Check max_tool_steps limit
+          4. Emit agent_step event
+          5. Context compaction if needed
+          6. Build API messages from Message list
+          7. Determine streaming vs batch mode
+          8. Call model
+          9. Handle output truncation recovery (if applicable)
+          10. Process response:
+             - If text only: append and done
+             - If tool_calls: execute them, append results, loop
+          11. Track circuit breaker progress and notify message bus
+        """
+        max_steps = self._config.max_tool_steps
+        consecutive_failures = 0
+        truncation_attempt = 0
+
+        while True:
+            # 1. Check step budget
+            if self._step_budget and not self._step_budget.consume():
+                messages.append(Message.system_warning("Step budget exhausted."))
+                logger.warning("AgentLoop: step budget exhausted")
+                break
+
+            # Check consecutive tool failures
+            if consecutive_failures >= self._config.max_consecutive_tool_failures:
+                messages.append(Message.system_warning(
+                    f"连续 {consecutive_failures} 次工具执行失败，终止循环"
+                ))
+                logger.warning(f"AgentLoop: {consecutive_failures} consecutive tool failures")
+                break
+
+            # Also check against config max_tool_steps
+            self._total_steps += 1
+            if self._total_steps > max_steps:
+                messages.append(
+                    Message.system_warning(
+                        f"Maximum tool steps reached ({max_steps})."
+                    )
+                )
+                logger.warning(
+                    f"AgentLoop: max_tool_steps ({max_steps}) reached"
+                )
+                break
+
+            # 2. Emit agent_step event
+            if self._event_bus:
+                await self._event_bus.emit(
+                    "agent_step",
+                    step=self._total_steps,
+                    max_steps=max_steps,
+                )
+
+            # 3. Context compaction
+            if self._context_window and self._auto_compactor:
+                try:
+                    compacted = await self._auto_compactor.maybe_compact(
+                        messages, system_prompt
+                    )
+                    if compacted is not messages:
+                        messages = compacted
+                        self._recovery_stats["context_compactions"] += 1
+                        if self._event_bus:
+                            await self._event_bus.emit(
+                                "context_compacted",
+                                message_count=len(messages),
+                            )
+                except Exception as e:
+                    logger.warning(f"Context compaction failed: {e}")
+
+            # 4. Build API messages and tool definitions
+            api_messages = self._build_api_messages(messages)
+            tools = self._build_tools_definition(allowed_tools)
+
+            # 5. Determine streaming vs batch mode
+            use_streaming = self._should_use_streaming(allowed_tools)
+
+            # 6. Call model
+            if use_streaming:
+                content, tool_calls, usage, finish_reason = (
+                    await self._call_model_streaming(api_messages, tools)
+                )
+            else:
+                response = await self._call_model_batch(api_messages, tools)
+                content = response.get("content", "")
+                tool_calls = response.get("tool_calls", [])
+                usage = response.get("usage", {})
+                finish_reason = response.get("finish_reason", "stop")
+
+            self._total_model_calls += 1
+
+            # Record circuit breaker progress
+            if self._circuit_breaker:
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                self._circuit_breaker.record_model_call(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    stage="agentloop",
+                    latency_ms=0,
+                )
+                if finish_reason != "error":
+                    self._circuit_breaker.record_success()
+
+            # 7. Handle output truncation recovery
+            if finish_reason == "length" and self._recovery_manager:
+                # Append partial assistant message
+                messages.append(Message.assistant_text(content))
+
+                if self._recovery_manager.should_continue_after_truncation(
+                    finish_reason, truncation_attempt
+                ):
+                    self._recovery_manager.record_recovery(RecoveryType.LENGTH)
+                    self._recovery_stats["truncation_recoveries"] += 1
+                    truncation_attempt += 1
+
+                    # Ask model to continue
+                    messages.append(
+                        Message.user_input(
+                            "Please continue from where you left off."
+                        )
+                    )
+                    continue
+                else:
+                    break
+
+            # 8. Process response
+            if not tool_calls:
+                # Text-only response — append and done
+                if content:
+                    messages.append(Message.assistant_text(content))
+                break
+
+            # 9. Has tool calls — process them
+            messages.append(
+                Message.assistant_tool_call(content, tool_calls)
+            )
+
+            # Execute tool calls
+            if use_streaming and self._streaming_executor:
+                # Tool execution was already handled by streaming executor
+                # in _call_model_streaming. Use those results directly
+                # to avoid double execution.
+                batch_results = self._streaming_tool_results
+                self._streaming_tool_results = []
+            else:
+                batch_results = await self._execute_tool_calls_batch(tool_calls)
+
+            # Append tool results as messages
+            for tool_call, result in batch_results:
+                call_id = tool_call.get("id", "")
+                # Support both orchestrator format {"name": ...} and OpenAI format {"function": {"name": ...}}
+                if "function" in tool_call:
+                    tool_name = tool_call["function"].get("name", "unknown")
+                else:
+                    tool_name = tool_call.get("name", "unknown")
+
+                result_content = self._format_tool_result(result)
+                messages.append(
+                    Message.tool_result(call_id, tool_name, result_content)
+                )
+
+                # Track progress in circuit breaker
+                if self._circuit_breaker:
+                    had_effect = result.success
+                    self._circuit_breaker.record_agent_step(
+                        tool_name, had_effect
+                    )
+
+                # Notify message bus of tool result
+                if self._message_bus:
+                    try:
+                        await self._message_bus.send(AgentMessage(
+                            from_agent="main",
+                            to_agent=BROADCAST,
+                            message_type="tool_result",
+                            content=json.dumps({
+                                "tool": tool_name,
+                                "success": result.success,
+                                "call_id": call_id,
+                            }),
+                        ))
+                    except Exception:
+                        pass  # Message bus failure must not block the tool loop
+
+            # Per-iteration failure tracking (not per-tool)
+            iteration_failed = any(not r.success for _, r in batch_results)
+            if iteration_failed:
+                consecutive_failures += 1
+            else:
+                consecutive_failures = 0
+
+            # Reset truncation attempt for next iteration
+            truncation_attempt = 0
+
+        return messages
+
+    # ==================================================================
+    # Model calling methods
+    # ==================================================================
+
+    def _should_use_streaming(self, allowed_tools: list[str]) -> bool:
+        """Determine if streaming should be used based on mode and model
+        capabilities.
+
+        Returns:
+            True if streaming should be used, False for batch mode.
+
+        Logic:
+            - mode == "batch" → always False
+            - mode == "streaming" → always True
+            - mode == "auto" → check model capabilities via
+              streaming_executor.can_stream_with_tools()
+        """
+        if self._streaming_mode == "batch":
+            return False
+        elif self._streaming_mode == "streaming":
+            if self._streaming_executor is None:
+                logger.warning(
+                    "Streaming mode requested but no StreamingToolExecutor "
+                    "provided, falling back to batch"
+                )
+                return False
+            return True
+        else:  # "auto"
+            if self._streaming_executor:
+                return self._streaming_executor.can_stream_with_tools(
+                    self._model
+                )
+            return False
+
+    async def _call_model_batch(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ) -> dict:
+        """Call model in batch (non-streaming) mode.
+
+        Uses ModelProvider.chat() or chat_with_fallback().
+        On failure with fallback configured, directly calls
+        fallback_provider.chat() as a secondary fallback.
+        Returns the model response dict with content, tool_calls,
+        usage, finish_reason.
+        """
+        try:
+            # Build the messages for the chat API
+            chat_messages = list(messages)
+
+            # Use chat_with_fallback when available (handles provider
+            # failover internally), otherwise fall back to plain chat().
+            if self._model.has_fallback:
+                response = await self._model.chat_with_fallback(chat_messages, tools=tools)
+            else:
+                response = await self._model.chat(chat_messages, tools=tools)
+
+            # Normalize response format
+            # chat() returns {"content": str}, we need to add
+            # tool_calls, usage, finish_reason
+            if not isinstance(response, dict):
+                response = {"content": str(response)}
+
+            response.setdefault("tool_calls", [])
+            response.setdefault("usage", {})
+            response.setdefault("finish_reason", "stop")
+
+            return response
+
+        except Exception as e:
+            last_error = str(e)  # Save before Python 3 deletes 'e' (PEP 3110)
+            logger.error(f"Batch model call failed: {e}")
+
+            # Record failure in circuit breaker
+            if self._circuit_breaker:
+                self._circuit_breaker.record_failure(last_error)
+
+            # Record recovery if applicable
+            if self._recovery_manager:
+                if self._recovery_manager.is_context_overflow(e):
+                    self._recovery_manager.record_recovery(
+                        RecoveryType.CONTEXT_OVERFLOW
+                    )
+                elif self._recovery_manager.is_retryable(e):
+                    self._recovery_manager.record_recovery(RecoveryType.FALLBACK)
+
+        # Only attempt manual fallback if we didn't already use chat_with_fallback
+        # (chat_with_fallback already tries the fallback provider internally)
+        if not self._model.has_fallback and self._model.fallback_provider:
+            try:
+                fallback_response = await self._model.fallback_provider.chat(
+                    chat_messages, tools=tools
+                )
+                if self._recovery_manager:
+                    self._recovery_manager.record_recovery(
+                        RecoveryType.FALLBACK
+                    )
+                if not isinstance(fallback_response, dict):
+                    fallback_response = {"content": str(fallback_response)}
+                fallback_response.setdefault("tool_calls", [])
+                fallback_response.setdefault("usage", {})
+                fallback_response.setdefault("finish_reason", "stop")
+                return fallback_response
+            except Exception as fallback_err:
+                logger.error(f"Fallback model also failed: {fallback_err}")
+
+        # Return an error response
+        return {
+            "content": f"Model call failed: {last_error}",
+            "tool_calls": [],
+            "usage": {},
+            "finish_reason": "error",
+        }
+
+    async def _call_model_streaming(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+    ) -> tuple[str, list[dict], dict, str]:
+        """Call model in streaming mode.
+
+        Uses StreamingToolExecutor to process stream + execute tools.
+        Returns (content, tool_calls, usage, finish_reason).
+        Handles streaming retry with fallback to batch.
+        """
+        for attempt in range(self._max_streaming_retries + 1):
+            try:
+                # Build the stream via model's stream_tap
+                from teragent.core.tap import TAPRequest, CompiledPrompt
+
+                # Build a compiled prompt from messages
+                compiled = CompiledPrompt(
+                    messages=messages,
+                    tools=tools,
+                )
+
+                # Create the stream
+                stream = self._model.adapter.stream(
+                    compiled, self._model.model
+                )
+
+                # Execute streaming with tool executor
+                results, streaming_result, stats = (
+                    await self._streaming_executor.execute_streaming(
+                        stream,
+                    )
+                )
+
+                content = streaming_result.content
+                tool_calls = streaming_result.tool_calls
+                usage = streaming_result.usage
+                finish_reason = streaming_result.finish_reason or "stop"
+
+                # Store streaming tool results for _tool_loop() to consume
+                # This avoids double execution — tools were already executed
+                # by the streaming executor during stream processing.
+                self._streaming_tool_results = results
+
+                return content, tool_calls, usage, finish_reason
+
+            except Exception as e:
+                logger.warning(
+                    f"Streaming attempt {attempt + 1} failed: {e}"
+                )
+                self._recovery_stats["streaming_retries"] += 1
+
+                if self._recovery_manager and self._recovery_manager.should_retry_streaming(
+                    attempt
+                ):
+                    if self._recovery_manager:
+                        self._recovery_manager.record_recovery(
+                            RecoveryType.STREAMING_RETRY
+                        )
+                    continue
+                break
+
+        # Fallback to batch mode
+        logger.info("Streaming failed, falling back to batch mode")
+        self._recovery_stats["batch_fallbacks"] += 1
+        if self._recovery_manager:
+            self._recovery_manager.record_recovery(RecoveryType.FALLBACK)
+
+        response = await self._call_model_batch(messages, tools)
+        tool_calls = response.get("tool_calls", [])
+
+        # When falling back to batch, tool execution was NOT performed
+        # by the streaming executor. Execute tools via batch path so
+        # _streaming_tool_results is populated for _tool_loop().
+        if tool_calls:
+            self._streaming_tool_results = await self._execute_tool_calls_batch(
+                tool_calls
+            )
+        else:
+            self._streaming_tool_results = []
+
+        return (
+            response.get("content", ""),
+            tool_calls,
+            response.get("usage", {}),
+            response.get("finish_reason", "stop"),
+        )
+
+    # ==================================================================
+    # Tool execution
+    # ==================================================================
+
+    async def _execute_tool_calls_batch(
+        self,
+        tool_calls: list[dict],
+    ) -> list[tuple[dict, ToolResult]]:
+        """Execute tool calls in batch mode via ToolOrchestrator."""
+        if not tool_calls:
+            return []
+
+        # Convert OpenAI-style tool_calls to orchestrator format
+        orchestrator_calls = []
+        for tc in tool_calls:
+            func_info = tc.get("function", {})
+            tool_name = func_info.get("name", "")
+            arguments = func_info.get("arguments", {})
+
+            # Parse arguments if it's a string
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+
+            orchestrator_calls.append({
+                "name": tool_name,
+                "arguments": arguments,
+                "id": tc.get("id", ""),
+            })
+
+        try:
+            results = await self._tool_orchestrator.execute_batch(
+                orchestrator_calls
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Tool execution batch failed: {e}", exc_info=True)
+            # Return error results for all tool calls
+            return [
+                (
+                    tc,
+                    ToolResult(
+                        success=False,
+                        data={},
+                        error=f"Tool execution failed: {e}",
+                    ),
+                )
+                for tc in tool_calls
+            ]
+
+    # ==================================================================
+    # Tool filtering
+    # ==================================================================
+
+    def _filter_tools_by_intent(
+        self,
+        intent: IntentType,
+    ) -> list[str]:
+        """Return allowed tool names for the given intent from
+        config.intent_tools."""
+        intent_tools = self._config.intent_tools
+        all_tool_names = self._tool_registry.list_tool_names()
+
+        if not intent_tools:
+            # No intent tools configured → allow all tools
+            return all_tool_names
+
+        # Check if intent is in config (including mapping to empty list)
+        if intent in intent_tools:
+            allowed = list(intent_tools[intent])
+        elif intent.value in intent_tools:
+            allowed = list(intent_tools[intent.value])
+        else:
+            # intent not in config → allow all tools as safe default
+            allowed = list(all_tool_names)
+
+        return allowed
+
+    # ==================================================================
+    # Permission management
+    # ==================================================================
+
+    def set_permission_level(self, level: int) -> None:
+        """Update permission level on both orchestrator and
+        streaming_executor."""
+        self._permission_level = level
+        if self._tool_orchestrator:
+            self._tool_orchestrator.set_permission_level(level)
+        if self._streaming_executor:
+            self._streaming_executor.set_permission_level(level)
+        if self._permission_manager:
+            if level >= 0:
+                self._permission_manager.set_level(level)
+            # else: keep current level unchanged
+
+    # ==================================================================
+    # Status reporting
+    # ==================================================================
+
+    def get_status_report(self) -> dict:
+        """Return a comprehensive status report."""
+        report: dict[str, Any] = {
+            "streaming_mode": self._streaming_mode,
+            "max_streaming_retries": self._max_streaming_retries,
+            "total_steps": self._total_steps,
+            "total_model_calls": self._total_model_calls,
+            "permission_level": self._permission_level,
+            "recovery_stats": dict(self._recovery_stats),
+            "config": {
+                "max_tool_steps": self._config.max_tool_steps,
+                "max_streaming_retries": self._config.max_streaming_retries,
+                "tool_execution_timeout": self._config.tool_execution_timeout,
+            },
+        }
+
+        # Add component status
+        if self._step_budget:
+            report["step_budget"] = {
+                "current": self._step_budget.current_steps,
+                "max": self._step_budget.max_steps,
+                "remaining": self._step_budget.remaining,
+                "exhausted": self._step_budget.exhausted,
+            }
+
+        if self._context_window:
+            report["context_window"] = {
+                "available_budget": self._context_window.available_budget,
+                "model_token_limit": self._context_window.model_token_limit,
+                "last_estimated_tokens": self._context_window.last_estimated_tokens,
+            }
+
+        if self._auto_compactor:
+            report["auto_compactor"] = self._auto_compactor.get_stats()
+
+        if self._circuit_breaker:
+            report["circuit_breaker"] = self._circuit_breaker.get_status()
+
+        if self._recovery_manager:
+            report["recovery_manager"] = self._recovery_manager.get_stats()
+
+        if self._permission_manager:
+            report["permission_manager"] = (
+                self._permission_manager.get_status_report()
+            )
+
+        if self._intent_classifier:
+            report["intent_classifier"] = self._intent_classifier.get_stats()
+
+        if self._tool_registry:
+            report["tool_registry"] = self._tool_registry.get_summary()
+
+        return report
+
+    # ==================================================================
+    # Internal helpers
+    # ==================================================================
+
+    def _build_api_messages(self, messages: list[Message]) -> list[dict]:
+        """Convert Message list to OpenAI API format."""
+        api_messages: list[dict] = []
+        for msg in messages:
+            # Skip tombstone messages
+            if msg.message_type == MessageType.TOMBSTONE:
+                continue
+
+            api_msg = msg.to_api_format()
+
+            # For tool result messages, ensure tool_call_id is present
+            if msg.role == MessageRole.TOOL and msg.tool_call_id:
+                api_msg["tool_call_id"] = msg.tool_call_id
+
+            # For assistant messages with tool_calls, ensure format
+            if msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                api_msg["tool_calls"] = msg.tool_calls
+
+            api_messages.append(api_msg)
+
+        return api_messages
+
+    def _build_tools_definition(self, allowed_tools: list[str]) -> list[dict]:
+        """Build OpenAI-format tool definitions for allowed tools."""
+        if not allowed_tools:
+            return []
+
+        tools: list[dict] = []
+        for name in allowed_tools:
+            tool = self._tool_registry.get(name)
+            if tool:
+                tools.append(tool.to_function_definition())
+
+        return tools
+
+    @staticmethod
+    def _format_tool_result(result: ToolResult) -> str:
+        """Format a ToolResult into a string for the model.
+
+        Includes success status, data, and error information.
+        """
+        parts: list[str] = []
+
+        if result.success:
+            parts.append("Success.")
+            if result.data:
+                if isinstance(result.data, dict):
+                    try:
+                        parts.append(json.dumps(result.data, ensure_ascii=False))
+                    except (TypeError, ValueError):
+                        parts.append(str(result.data))
+                else:
+                    parts.append(str(result.data))
+        else:
+            parts.append(f"Error: {result.error}")
+
+        if result.metadata:
+            try:
+                meta_str = json.dumps(result.metadata, ensure_ascii=False)
+            except (TypeError, ValueError):
+                meta_str = str(result.metadata)
+            parts.append(f"Metadata: {meta_str}")
+
+        return "\n".join(parts) if parts else "Tool completed with no output."
+
+    def reset(self) -> None:
+        """Reset the agent loop state for a new conversation."""
+        self._total_steps = 0
+        self._total_model_calls = 0
+        self._streaming_tool_results = []
+        self._recovery_stats = {
+            "streaming_mode": self._streaming_mode,
+            "streaming_retries": 0,
+            "batch_fallbacks": 0,
+            "truncation_recoveries": 0,
+            "context_compactions": 0,
+        }
+        self.set_permission_level(0)
+
+        if self._step_budget:
+            self._step_budget.reset()
+        if self._auto_compactor:
+            self._auto_compactor.reset()
+
+    def __repr__(self) -> str:
+        return (
+            f"AgentLoop("
+            f"model={self._model.model!r}, "
+            f"streaming_mode={self._streaming_mode!r}, "
+            f"steps={self._total_steps}, "
+            f"tools={len(self._tool_registry)})"
+        )

@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teragent"
+version = "0.0.1"
+description = "Terminal AI Agent Library — TAP IR + Model-Specific Compilation"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "TerAgent Contributors" },
+]
+keywords = ["ai", "agent", "llm", "tap", "compiler", "code-generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "httpx>=0.25",
+    "aiosqlite>=0.19",
+    "python-dotenv>=1.0",
+    'tomli>=2.0; python_version < "3.11"',
+]
+
+[project.optional-dependencies]
+# VectorIndexer requires LanceDB + numpy
+vector = [
+    "lancedb>=0.6",
+    "numpy",
+]
+# CodeIndexer requires tree-sitter for AST parsing
+ast = [
+    "tree-sitter>=0.21",
+    "tree-sitter-python>=0.21",
+    "watchdog>=3.0",
+]
+# ReferenceGraph requires networkx for dependency graph analysis
+graph = [
+    "networkx>=3.0",
+]
+# Development tools
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.1",
+]
+# All optional dependencies together
+all = [
+    "teragent[vector,ast,graph]",
+]
+
+[project.urls]
+Repository = "https://github.com/teragent/teragent"
+
+[tool.setuptools.packages.find]
+include = ["teragent*"]
+
+[tool.setuptools.package-data]
+teragent = ["py.typed"]
+
+# ===== pytest 配置 =====
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+# ===== ruff 配置 =====
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
