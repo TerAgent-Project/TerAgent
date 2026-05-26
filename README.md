@@ -7,6 +7,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Version: 0.0.1](https://img.shields.io/badge/version-0.0.1-orange.svg)](https://github.com/teragent/teragent)
 
+**English** | [中文](README_zh.md)
 
 ---
 
@@ -673,4 +674,3 @@ mypy teragent/
 ## License
 
 Apache License Version 2.0
-

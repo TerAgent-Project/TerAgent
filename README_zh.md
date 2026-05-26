@@ -9,7 +9,6 @@
 
 [English](README.md) | **中文**
 
-
 ---
 
 TerAgent 是一个用于构建生产级 AI Agent 系统的 Python 库，核心采用**编译器-适配器正交架构**。它引入了 **TAP IR**（Tool-Augmented Prompt Intermediate Representation）—— 一种模型无关的内存中间表示，将 *"问什么"* 与 *"怎么格式化"* 解耦，实现 Prompt 编译器与协议适配器的正交组合。
@@ -694,4 +693,3 @@ mypy teragent/
 ## 许可证
 
 Apache License Version 2.0
-
