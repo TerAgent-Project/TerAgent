@@ -4,16 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "teragent"
-version = "0.0.1"
+version = "0.1.0"
 description = "Terminal AI Agent Library — TAP IR + Model-Specific Compilation"
+readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
     { name = "TerAgent Contributors" },
 ]
-keywords = ["ai", "agent", "llm", "tap", "compiler", "code-generation"]
+keywords = ["ai", "agent", "llm", "tap", "compiler", "code-generation", "deepseek", "glm", "minimax"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -21,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
     "httpx>=0.25",
@@ -60,6 +62,8 @@ all = [
 
 [project.urls]
 Repository = "https://github.com/teragent/teragent"
+Documentation = "https://teragent.readthedocs.io"
+Changelog = "https://github.com/teragent/teragent/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["teragent*"]
@@ -79,6 +83,9 @@ addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
+]
+markers = [
+    "live: marks tests that call real API endpoints (deselect with '-m not live')",
 ]
 
 # ===== ruff 配置 =====

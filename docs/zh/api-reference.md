@@ -71,9 +71,9 @@ from teragent import ModelProvider, create_provider
 
 # Create via factory function
 provider = create_provider(
-    compiler="glm",
+    compiler="glm_5",
     adapter="openai_compatible",
-    model="glm-5.1",
+    model="glm-5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
 )

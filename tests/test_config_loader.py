@@ -30,7 +30,7 @@ class TestInferCompiler:
 
     def test_partial_match(self):
         """identity 包含已知关键词"""
-        assert infer_compiler("glm_5") == "glm"
+        assert infer_compiler("glm_5") == "glm_5"
         assert infer_compiler("claude_sonnet") == "anthropic"
 
     def test_unknown_defaults(self):
@@ -77,7 +77,7 @@ class TestFormatDetection:
         drivers = {
             "openai_compatible": {
                 "glm": {
-                    "model": "glm-5.1",
+                    "model": "glm-5",
                     "base_url": "https://api.example.com",
                     "api_key_env": "GLM_KEY",
                 }
@@ -115,7 +115,7 @@ class TestLoadDriverConfigs:
             "drivers": {
                 "openai_compatible": {
                     "glm": {
-                        "model": "glm-5.1",
+                        "model": "glm-5",
                         "base_url": "https://api.example.com",
                         "api_key_env": "GLM_API_KEY",
                         "compiler": "glm",
@@ -127,7 +127,7 @@ class TestLoadDriverConfigs:
         assert "openai_compatible.glm" in drivers
         dc = drivers["openai_compatible.glm"]
         assert isinstance(dc, DriverConfig)
-        assert dc.model == "glm-5.1"
+        assert dc.model == "glm-5"
         assert dc.compiler == "glm"
 
     def test_load_old_format(self):

@@ -35,9 +35,9 @@ import teragent
 
 # Method 1: Factory function (recommended)
 provider = teragent.create_provider(
-    compiler="glm",
+    compiler="glm_5",
     adapter="openai_compatible",
-    model="glm-5.1",
+    model="glm-5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
 )
@@ -45,17 +45,17 @@ provider = teragent.create_provider(
 # Method 2: From config file
 full_config = teragent.load_full_config()
 drivers = full_config["drivers"]
-provider = teragent.create_provider_from_config(drivers["openai_compatible.glm"])
+provider = teragent.create_provider_from_config(drivers["openai_compatible.glm_5"])
 
 # Method 3: From DriverConfig object
 from teragent.config import DriverConfig
 driver_cfg = DriverConfig(
     adapter="openai_compatible",
-    identity="glm",
+    identity="glm_5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
-    model="glm-5.1",
-    compiler="glm",
+    model="glm-5",
+    compiler="glm_5",
 )
 provider = teragent.create_provider(**driver_cfg.to_create_provider_kwargs())
 ```
@@ -141,6 +141,11 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 | `glm` | Recency effect (key instruction last) | GLM series (Zhipu AI) |
 | `anthropic` | XML tag structured + Mode B | Claude series |
 | `deepseek` | Minimalist compilation | DeepSeek models |
+| `deepseek_v4` | Cache-aware layout + thinking mode + 1M context optimization | DeepSeek V4-Flash/Pro |
+| `deepseek_v4_flash` | Minimal prompts for fast response | DeepSeek V4-Flash |
+| `deepseek_v4_pro` | Full prompts + deep reasoning | DeepSeek V4-Pro |
+| `glm_5` | Recency effect + long-horizon + self-evaluation | GLM-5 |
+| `minimax_m3` | MSA full-text injection + multimodal | MiniMax M3 |
 
 ### Adapters
 
@@ -148,6 +153,7 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 |---------|----------|-------|
 | `openai_compatible` | OpenAI `/chat/completions` with SSE | Works with GLM, DeepSeek, OpenRouter, etc. |
 | `anthropic_native` | Anthropic `/messages` with Anthropic SSE | Direct Anthropic API |
+| `minimax_native` | MiniMax native API with rate limit tracking | MiniMax M3 multimodal/desktop |
 | `mock` | No HTTP calls | For testing |
 
 ### Valid Combinations
@@ -156,9 +162,15 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 |----------|---------|--------|-----------------|
 | `default` | `openai_compatible` | Generic OpenAI-protocol models | Standard chat messages |
 | `glm` | `openai_compatible` | GLM series (Zhipu AI) | Recency effect optimization |
+| `glm_5` | `openai_compatible` | GLM-5 (long-horizon) | Deep reasoning + long-horizon task support |
 | `anthropic` | `openai_compatible` | Claude via OpenRouter | XML tags + recency |
 | `anthropic` | `anthropic_native` | Claude via Anthropic API | XML tags + system/user separation (Mode B) |
-| `deepseek` | `openai_compatible` | DeepSeek models | Minimalist compilation |
+| `deepseek` | `openai_compatible` | DeepSeek V3 models | Minimalist compilation |
+| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | Cache-aware layout + thinking mode |
+| `deepseek_v4_flash` | `openai_compatible` | DeepSeek V4-Flash | Minimal prompts for fast response |
+| `deepseek_v4_pro` | `openai_compatible` | DeepSeek V4-Pro | Full prompts + deep reasoning |
+| `minimax_m3` | `openai_compatible` | MiniMax M3 (text) | MSA full-text injection |
+| `minimax_m3` | `minimax_native` | MiniMax M3 (multimodal/desktop) | Native multimodal + rate limit tracking |
 | `default` | `mock` | Testing | No HTTP calls |
 
 ## Next Steps

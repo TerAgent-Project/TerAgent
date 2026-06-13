@@ -7,11 +7,11 @@ TerAgent 使用由 `agent.toml` 文件支持的类型化配置系统。本文档
 在项目根目录创建 `agent.toml`：
 
 ```toml
-[drivers.openai_compatible.glm]
+[drivers.openai_compatible.glm_5]
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 api_key_env = "GLM_API_KEY"
-model = "glm-5.1"
-compiler = "glm"
+model = "glm-5"
+compiler = "glm_5"
 
 [drivers.anthropic_native.claude]
 base_url = "https://api.anthropic.com/v1"
@@ -26,10 +26,10 @@ model = "deepseek-chat"
 compiler = "deepseek"
 
 [execution.pipeline]
-design_driver = "openai_compatible.glm"
-plan_driver = "openai_compatible.glm"
-execute_driver = "openai_compatible.glm"
-review_driver = "openai_compatible.glm"
+design_driver = "openai_compatible.glm_5"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.glm_5"
 
 [permission]
 mode = "plan"
@@ -51,7 +51,7 @@ drivers = teragent.load_driver_configs()
 pipeline = teragent.load_pipeline_config()
 
 # Create a provider from config
-provider = teragent.create_provider_from_config(drivers["openai_compatible.glm"])
+provider = teragent.create_provider_from_config(drivers["openai_compatible.glm_5"])
 
 # Load typed configuration
 typed_config = teragent.load_typed_config()

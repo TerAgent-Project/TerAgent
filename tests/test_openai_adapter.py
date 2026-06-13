@@ -218,9 +218,9 @@ class TestOpenAICapabilities:
         assert adapter.capabilities["tool_calling"] is True
 
     def test_capabilities_contains_max_context_tokens(self):
-        """capabilities 包含 max_context_tokens"""
+        """capabilities 包含 max_context_tokens (upgraded to 1M for V4/M3 support)"""
         adapter = OpenAICompatibleAdapter(base_url="https://api.example.com", api_key="sk-test")
-        assert adapter.capabilities["max_context_tokens"] == 128000
+        assert adapter.capabilities["max_context_tokens"] == 1_000_000
 
 
 # ===== FAKE_TOOLS & FAKE_TOOL_NAMES =====

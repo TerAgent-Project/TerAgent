@@ -7,11 +7,11 @@ TerAgent uses a typed configuration system backed by `agent.toml` files. This do
 Create an `agent.toml` in your project root:
 
 ```toml
-[drivers.openai_compatible.glm]
+[drivers.openai_compatible.glm_5]
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 api_key_env = "GLM_API_KEY"
-model = "glm-5.1"
-compiler = "glm"
+model = "glm-5"
+compiler = "glm_5"
 
 [drivers.anthropic_native.claude]
 base_url = "https://api.anthropic.com/v1"
@@ -26,10 +26,10 @@ model = "deepseek-chat"
 compiler = "deepseek"
 
 [execution.pipeline]
-design_driver = "openai_compatible.glm"
-plan_driver = "openai_compatible.glm"
-execute_driver = "openai_compatible.glm"
-review_driver = "openai_compatible.glm"
+design_driver = "openai_compatible.glm_5"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.glm_5"
 
 [permission]
 mode = "plan"
@@ -51,7 +51,7 @@ drivers = teragent.load_driver_configs()
 pipeline = teragent.load_pipeline_config()
 
 # Create a provider from config
-provider = teragent.create_provider_from_config(drivers["openai_compatible.glm"])
+provider = teragent.create_provider_from_config(drivers["openai_compatible.glm_5"])
 
 # Load typed configuration
 typed_config = teragent.load_typed_config()
@@ -182,13 +182,409 @@ config = TerAgentConfig(
 )
 ```
 
+## New Model Drivers
+
+### DeepSeek V4-Flash Driver
+
+```toml
+[drivers.openai_compatible.deepseek_v4_flash]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+compiler = "deepseek_v4"
+compiler_variant = "flash"              # Flash mode: minimal prompt, fast response
+max_context_tokens = 1_000_000          # V4 supports 1M context
+max_output_tokens = 384_000             # V4 max 384K output
+thinking_mode = "auto"                  # auto/deep/quick
+cache_aware = true                      # Enable cache awareness (12x price diff)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `base_url` | string | — | DeepSeek API base URL |
+| `api_key_env` | string | — | Environment variable name for API key |
+| `model` | string | — | Must be `"deepseek-v4-flash"` |
+| `compiler` | string | — | Must be `"deepseek_v4"` |
+| `compiler_variant` | string | `"pro"` | Must be `"flash"` for Flash mode |
+| `max_context_tokens` | int | `1_000_000` | Maximum context window |
+| `max_output_tokens` | int | `384_000` | Maximum output tokens |
+| `thinking_mode` | string | `"auto"` | Thinking mode: `auto`/`deep`/`quick` |
+| `cache_aware` | bool | `false` | Enable cache-aware prompt layout |
+
+### DeepSeek V4-Pro Driver
+
+```toml
+[drivers.openai_compatible.deepseek_v4_pro]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-pro"
+compiler = "deepseek_v4"
+compiler_variant = "pro"                # Pro mode: full prompt + reasoning guidance
+max_context_tokens = 1_000_000
+max_output_tokens = 384_000
+thinking_mode = "deep"                  # Pro defaults to deep reasoning
+cache_aware = true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `compiler_variant` | string | `"pro"` | Must be `"pro"` for Pro mode |
+| `thinking_mode` | string | `"deep"` | Pro defaults to deep reasoning |
+
+### MiniMax M3 Driver
+
+```toml
+[drivers.openai_compatible.minimax_m3]
+base_url = "https://api.minimaxi.com/v1"
+api_key_env = "MINIMAX_API_KEY"
+model = "minimax-m3"
+compiler = "minimax_m3"
+max_context_tokens = 1_000_000          # M3 supports 1M context
+max_output_tokens = 384_000
+multimodal_enabled = true               # Enable multimodal (image+video)
+desktop_enabled = true                  # Enable desktop operations
+msa_efficient = true                    # MSA full-text injection mode
+group_id = ""                           # Optional MiniMax Group ID
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `base_url` | string | — | MiniMax API base URL |
+| `api_key_env` | string | — | Environment variable name for API key |
+| `model` | string | — | Must be `"minimax-m3"` |
+| `compiler` | string | — | Must be `"minimax_m3"` |
+| `multimodal_enabled` | bool | `false` | Enable native multimodal support |
+| `desktop_enabled` | bool | `false` | Enable desktop operation support |
+| `msa_efficient` | bool | `false` | Enable MSA full-text injection |
+| `group_id` | string | `""` | MiniMax Group ID (required for some endpoints) |
+
+### GLM-5 Driver
+
+```toml
+[drivers.openai_compatible.glm_5]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5"
+compiler = "glm_5"
+max_context_tokens = 200_000            # GLM-5 200K context
+max_output_tokens = 128_000
+thinking_mode = "deep"                  # GLM-5 defaults to deep reasoning
+long_horizon_enabled = true             # Enable long-horizon mode (8h autonomy)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | — | Must be `"glm-5"` |
+| `compiler` | string | — | Must be `"glm_5"` |
+| `max_context_tokens` | int | `200_000` | GLM-5 context window (200K) |
+| `long_horizon_enabled` | bool | `false` | Enable long-horizon autonomous mode |
+
+## Smart Routing Configuration
+
+### [routing] Section
+
+Controls automatic model selection based on content type and task characteristics:
+
+```toml
+[routing]
+# Multimodal content (images/video) → M3
+multimodal_driver = "openai_compatible.minimax_m3"
+
+# Desktop operations → M3
+desktop_driver = "openai_compatible.minimax_m3"
+
+# Long-horizon tasks → GLM-5
+long_horizon_driver = "openai_compatible.glm_5"
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `multimodal_driver` | string | `"openai_compatible.minimax_m3"` | Driver for multimodal content |
+| `desktop_driver` | string | `"openai_compatible.minimax_m3"` | Driver for desktop context |
+| `long_horizon_driver` | string | `"openai_compatible.glm_5"` | Driver for long-horizon tasks |
+
+### [routing.monthly_budget] Section
+
+Monthly cost control with automatic downgrade:
+
+```toml
+[routing.monthly_budget]
+limit_cny = 500.0              # Monthly budget cap in CNY
+warning_threshold = 0.8        # Warn at 80% utilization
+critical_threshold = 1.0       # Auto-downgrade at 100%
+auto_downgrade = true          # Enable automatic downgrade
+auto_downgrade_driver = "openai_compatible.deepseek_v4_flash"  # Fallback driver
+notify_on_warning = true       # Emit events on budget warning
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit_cny` | float | `0.0` | Monthly budget cap in CNY (0 = no limit) |
+| `warning_threshold` | float | `0.8` | Fraction at which to emit warning |
+| `critical_threshold` | float | `1.0` | Fraction at which to auto-downgrade |
+| `auto_downgrade` | bool | `true` | Whether to auto-downgrade when budget exhausted |
+| `auto_downgrade_driver` | string | `"openai_compatible.deepseek_v4_flash"` | Driver to fall back to |
+| `notify_on_warning` | bool | `true` | Whether to emit events on budget warning |
+
+## Pipeline Named Profiles
+
+### [execution.pipeline.profiles.*] Sections
+
+Define named pipeline configurations that can be switched at runtime:
+
+```toml
+# Budget profile: maximum cost savings
+[execution.pipeline.profiles.budget]
+description = "Maximum cost savings: all stages use V4-Flash"
+design_driver = "openai_compatible.deepseek_v4_flash"
+plan_driver = "openai_compatible.deepseek_v4_flash"
+execute_driver = "openai_compatible.deepseek_v4_flash"
+review_driver = "openai_compatible.deepseek_v4_flash"
+
+# Multimodal profile: all stages use M3
+[execution.pipeline.profiles.multimodal]
+description = "Multimodal mode: all stages use M3"
+design_driver = "openai_compatible.minimax_m3"
+plan_driver = "openai_compatible.minimax_m3"
+execute_driver = "openai_compatible.minimax_m3"
+review_driver = "openai_compatible.minimax_m3"
+
+# Quality profile: best model for each stage
+[execution.pipeline.profiles.quality]
+description = "Quality first: design/review with V4-Pro, plan/execute with GLM-5"
+design_driver = "openai_compatible.deepseek_v4_pro"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.deepseek_v4_pro"
+```
+
+Each profile section supports:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `description` | string | No | Human-readable profile description |
+| `design_driver` | string | Yes | Driver for design stage |
+| `plan_driver` | string | Yes | Driver for plan stage |
+| `execute_driver` | string | Yes | Driver for execute stage |
+| `review_driver` | string | Yes | Driver for review stage |
+
+**Built-in profiles** (automatically available):
+- `default` — Uses the base `[execution.pipeline]` settings
+- `budget` — All stages use V4-Flash
+- `multimodal` — All stages use M3
+
+## Per-Model Circuit Breaker Configuration
+
+```toml
+[circuit_breaker.models.deepseek_v4_pro]
+max_consecutive_failures = 5        # Open breaker after N consecutive failures
+window_seconds = 300.0              # Sliding window duration (seconds)
+cooldown_seconds = 60.0             # Time before half-open transition
+failure_threshold_percent = 0.5     # Open if >50% failures in window
+half_open_max_calls = 3             # Test calls allowed in half-open state
+
+[circuit_breaker.models.deepseek_v4_flash]
+max_consecutive_failures = 8        # More tolerant for lightweight model
+cooldown_seconds = 30.0             # Shorter cooldown
+
+[circuit_breaker.models.minimax_m3]
+max_consecutive_failures = 5
+cooldown_seconds = 60.0
+
+[circuit_breaker.models.glm_5]
+max_consecutive_failures = 5
+cooldown_seconds = 90.0             # Longer cooldown for long-horizon model
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_consecutive_failures` | int | `5` | Consecutive failures to open breaker |
+| `window_seconds` | float | `300.0` | Sliding window for failure rate |
+| `cooldown_seconds` | float | `60.0` | Cooldown before half-open transition |
+| `failure_threshold_percent` | float | `0.5` | Failure rate threshold in window |
+| `half_open_max_calls` | int | `3` | Test calls in half-open state |
+
+## Degradation Chain Configuration
+
+Controls the fallback order when a model becomes unavailable:
+
+```toml
+[degradation]
+# Default chains for the three-model architecture
+heavy = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+multimodal = ["minimax_m3", "deepseek_v4_pro"]
+default = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+```
+
+| Chain | Description |
+|-------|-------------|
+| `heavy` | Complex tasks: V4-Pro → GLM-5 → V4-Flash |
+| `multimodal` | Visual tasks: M3 → V4-Pro (degrades to text-only) |
+| `default` | General tasks: V4-Pro → GLM-5 → V4-Flash |
+
+## Long-Horizon Task Configuration
+
+```toml
+[long_horizon]
+max_duration_hours = 8.0                   # Maximum task duration
+checkpoint_interval_minutes = 15.0          # Save checkpoint every N minutes
+evaluation_interval_steps = 10             # Self-evaluate every N steps
+evaluation_interval_minutes = 30.0         # Self-evaluate every N minutes
+stagnation_threshold = 3                   # Consecutive similar results → stagnation
+no_progress_threshold = 5                  # Consecutive steps without output → stagnation
+similarity_threshold = 0.8                 # Jaccard similarity threshold for stagnation
+max_strategy_switches = 5                  # Maximum strategy switches per task
+checkpoint_base_dir = ".teragent/checkpoints"  # Checkpoint storage directory
+checkpoint_keep_last = 5                   # Keep last N checkpoints per task
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_duration_hours` | float | `8.0` | Maximum task duration in hours |
+| `checkpoint_interval_minutes` | float | `15.0` | Auto-checkpoint interval |
+| `evaluation_interval_steps` | int | `10` | Self-evaluation trigger (by steps) |
+| `evaluation_interval_minutes` | float | `30.0` | Self-evaluation trigger (by time) |
+| `stagnation_threshold` | int | `3` | Consecutive similar results for stagnation |
+| `no_progress_threshold` | int | `5` | Consecutive no-output steps for stagnation |
+| `similarity_threshold` | float | `0.8` | Jaccard similarity threshold |
+| `max_strategy_switches` | int | `5` | Maximum strategy switches per task |
+| `checkpoint_base_dir` | string | `".teragent/checkpoints"` | Checkpoint storage directory |
+| `checkpoint_keep_last` | int | `5` | Keep last N checkpoints per task |
+
+## Complete agent.toml Reference
+
+The following shows all available configuration sections:
+
+```toml
+# ===== Model Drivers =====
+[drivers.openai_compatible.deepseek_v4_flash]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+compiler = "deepseek_v4"
+compiler_variant = "flash"
+max_context_tokens = 1_000_000
+max_output_tokens = 384_000
+thinking_mode = "auto"
+cache_aware = true
+
+[drivers.openai_compatible.deepseek_v4_pro]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-pro"
+compiler = "deepseek_v4"
+compiler_variant = "pro"
+max_context_tokens = 1_000_000
+max_output_tokens = 384_000
+thinking_mode = "deep"
+cache_aware = true
+
+[drivers.openai_compatible.minimax_m3]
+base_url = "https://api.minimaxi.com/v1"
+api_key_env = "MINIMAX_API_KEY"
+model = "minimax-m3"
+compiler = "minimax_m3"
+max_context_tokens = 1_000_000
+max_output_tokens = 384_000
+multimodal_enabled = true
+desktop_enabled = true
+msa_efficient = true
+group_id = ""
+
+[drivers.openai_compatible.glm_5]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5"
+compiler = "glm_5"
+max_context_tokens = 200_000
+max_output_tokens = 128_000
+thinking_mode = "deep"
+long_horizon_enabled = true
+
+# ===== Execution Pipeline =====
+[execution.pipeline]
+design_driver = "openai_compatible.deepseek_v4_pro"
+plan_driver = "openai_compatible.deepseek_v4_pro"
+execute_driver = "openai_compatible.deepseek_v4_flash"
+review_driver = "openai_compatible.glm_5"
+
+[execution.pipeline.profiles.budget]
+description = "Maximum cost savings"
+design_driver = "openai_compatible.deepseek_v4_flash"
+plan_driver = "openai_compatible.deepseek_v4_flash"
+execute_driver = "openai_compatible.deepseek_v4_flash"
+review_driver = "openai_compatible.deepseek_v4_flash"
+
+[execution.pipeline.profiles.multimodal]
+description = "Multimodal mode"
+design_driver = "openai_compatible.minimax_m3"
+plan_driver = "openai_compatible.minimax_m3"
+execute_driver = "openai_compatible.minimax_m3"
+review_driver = "openai_compatible.minimax_m3"
+
+[execution.pipeline.profiles.quality]
+description = "Quality first"
+design_driver = "openai_compatible.deepseek_v4_pro"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.deepseek_v4_pro"
+
+# ===== Smart Routing =====
+[routing]
+multimodal_driver = "openai_compatible.minimax_m3"
+desktop_driver = "openai_compatible.minimax_m3"
+long_horizon_driver = "openai_compatible.glm_5"
+
+[routing.monthly_budget]
+limit_cny = 500.0
+warning_threshold = 0.8
+auto_downgrade = true
+
+# ===== Circuit Breakers =====
+[circuit_breaker.models.deepseek_v4_pro]
+max_consecutive_failures = 5
+cooldown_seconds = 60.0
+
+[circuit_breaker.models.minimax_m3]
+max_consecutive_failures = 5
+cooldown_seconds = 60.0
+
+[circuit_breaker.models.glm_5]
+max_consecutive_failures = 5
+cooldown_seconds = 90.0
+
+# ===== Long-Horizon Tasks =====
+[long_horizon]
+max_duration_hours = 8.0
+checkpoint_interval_minutes = 15.0
+evaluation_interval_steps = 10
+evaluation_interval_minutes = 30.0
+
+# ===== Degradation Chains =====
+[degradation]
+heavy = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+multimodal = ["minimax_m3", "deepseek_v4_pro"]
+default = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+
+# ===== Standard Configuration =====
+[permission]
+mode = "plan"
+rules = { allow = ["read_file:*", "explore_codebase:*"], deny = ["*:**/.env*"] }
+
+[context_management]
+model_token_limit = 1_000_000
+compaction_threshold = 0.8
+retain_count = 8
+```
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `GLM_API_KEY` | Zhipu AI API key |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (V4-Flash and V4-Pro) |
+| `MINIMAX_API_KEY` | MiniMax API key (M3) |
+| `GLM_API_KEY` | Zhipu AI API key (GLM-5) |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
-| `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 
 TerAgent uses `python-dotenv` to load `.env` files automatically.

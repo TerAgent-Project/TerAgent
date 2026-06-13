@@ -18,9 +18,9 @@ import teragent
 async def main() -> None:
     # Create a provider with GLM compiler + OpenAI-compatible adapter
     provider = teragent.create_provider(
-        compiler="glm",
+        compiler="glm_5",
         adapter="openai_compatible",
-        model="glm-4-flash",
+        model="glm-5",
         base_url="https://open.bigmodel.cn/api/paas/v4",
         api_key_env="GLM_API_KEY",
     )

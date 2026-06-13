@@ -24,3 +24,14 @@ from teragent.pipeline.tracing import (
     DataConstitution,
     TraceStats,
 )
+# Sub-agent worker
+from teragent.pipeline.subagent_worker import SubAgentWorker
+
+__all__ = [
+    "TAPTracer",
+    "TraceRecord",
+    "DPOPair",
+    "DataConstitution",
+    "TraceStats",
+    "SubAgentWorker",
+]

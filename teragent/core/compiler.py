@@ -2,10 +2,13 @@
 
 A Compiler transforms TAPRequest (IR) into CompiledPrompt (model-specific prompt).
 Different models need different compilation strategies:
+  - Default: Generic OpenAI-compatible format
   - GLM: Recency effect optimization (key instruction last)
   - Anthropic: XML tag structured optimization
   - DeepSeek: Minimalist compilation
-  - Default: Generic OpenAI-compatible format
+  - DeepSeekV4: Thinking mode + Flash/Pro dual variants + 1M context (new)
+  - GLM5: Recency effect + 200K extreme compression + long-horizon (new)
+  - MiniMaxM3: Multi-modal + MSA full-text injection + desktop ops (new)
 """
 
 from __future__ import annotations
@@ -36,7 +39,45 @@ class TAPCompiler(ABC):
 
     Optionally override:
         _default_prompts -> dict[str, str]
+        supports_multimodal -> bool
+        supports_thinking_mode -> bool
+        max_context_tokens -> int
     """
+
+    # ----- Capability properties (override in subclasses) -----
+
+    @property
+    def supports_multimodal(self) -> bool:
+        """Whether this Compiler can handle multimodal input (images, videos).
+
+        Only MiniMaxM3Compiler returns True; other Compilers should degrade
+        multimodal content to text descriptions and log a warning.
+        """
+        return False
+
+    @property
+    def supports_thinking_mode(self) -> bool:
+        """Whether this Compiler supports thinking/reasoning mode control.
+
+        DeepSeekV4Compiler and GLM5Compiler return True.
+        When True, the Compiler reads request.thinking_mode and configures
+        the prompt and API parameters accordingly.
+        """
+        return False
+
+    @property
+    def max_context_tokens(self) -> int:
+        """Maximum context window size in tokens for this Compiler's model.
+
+        Compilers should override this to reflect their model's actual limit:
+        - DeepSeekV4Compiler: 1_000_000
+        - MiniMaxM3Compiler: 1_000_000
+        - GLM5Compiler: 200_000
+        - Default: 128_000
+        """
+        return 128_000
+
+    # ----- Abstract method -----
 
     @abstractmethod
     def compile(self, request: TAPRequest) -> CompiledPrompt:
@@ -55,6 +96,8 @@ class TAPCompiler(ABC):
         """
         ...
 
+    # ----- Prompt resolution -----
+
     def get_system_prompt(self, intent: str) -> str:
         """Get intent-specific system prompt
 
@@ -70,7 +113,8 @@ class TAPCompiler(ABC):
         """Return the compiler type name for prompt registry lookup.
 
         Subclasses should override to return their specific type:
-        'default', 'glm', 'anthropic', 'deepseek'.
+        'default', 'glm', 'anthropic', 'deepseek',
+        'deepseek_v4', 'glm_5', 'minimax_m3'.
         """
         return "default"
 
@@ -89,6 +133,8 @@ class TAPCompiler(ABC):
             if prompt:
                 prompts[intent] = prompt
         return prompts
+
+    # ----- Context injection helpers -----
 
     def _inject_context(self, messages: list[dict], request: TAPRequest) -> list[dict]:
         """Shared context injection logic (all Compilers share this)
@@ -162,6 +208,39 @@ class TAPCompiler(ABC):
                 f"<dependency_report>\n{request.context['dependency_report']}\n</dependency_report>"
             )
         return "\n\n".join(parts)
+
+    # ----- Multimodal degradation -----
+
+    def _handle_multimodal_degradation(self, request: TAPRequest) -> str:
+        """Handle multimodal content when this Compiler doesn't support it.
+
+        Extracts text descriptions from multimodal content and emits a warning.
+        Called by Compilers that have supports_multimodal=False when they
+        receive a TAPRequest with multimodal_context.
+
+        Args:
+            request: The TAP request with multimodal content
+
+        Returns:
+            Concatenated text descriptions of all multimodal content
+        """
+        if not request.has_multimodal:
+            return ""
+
+        descriptions: list[str] = []
+        for mc in request.multimodal_context:
+            desc = mc.extract_text_description()
+            if desc:
+                descriptions.append(desc)
+
+        if descriptions:
+            logger.warning(
+                f"{self.__class__.__name__}: Request contains multimodal content but "
+                f"this Compiler does not support it. Degraded to text descriptions. "
+                f"Use MiniMaxM3Compiler for native multimodal support."
+            )
+
+        return "\n".join(descriptions)
 
 
 class TAPCompilerRegistry:

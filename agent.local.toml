@@ -1,0 +1,286 @@
+# TerAgent 本地部署配置模板 — 国产芯片 Ascend 910B / 950PR
+# 版本：v1.0 | 用于本地推理部署
+#
+# 使用方式：
+#   1. 复制本文件为 agent.toml：cp agent.local.toml agent.toml
+#   2. 修改 base_url 为实际推理服务地址
+#   3. 启动推理服务后运行 TerAgent
+#
+# 推理服务启动参考：
+#   GLM-5:        python -m vllm.entrypoints.openai.api_server --model /data/models/glm-5 --device npu --port 8001 ...
+#   DeepSeek V4:    python -m vllm.entrypoints.openai.api_server --model /data/models/deepseek-v4-flash --device npu --port 8002 ...
+#   MiniMax M3:     python -m vllm.entrypoints.openai.api_server --model /data/models/minimax-m3 --device npu --port 8003 ...
+
+# =============================================================================
+# 全局参数
+# =============================================================================
+max_parallel = 4                      # 最大并行工具调用数
+max_retries = 2                       # 最大重试次数
+workspace_root = "."                  # 工作空间根目录
+user_review = false                   # 用户审查（本地部署可关闭）
+llm_review = false                    # LLM 审查
+max_pipeline_steps = 300              # 最大流水线步数
+max_repair_rounds = 3                 # 最大修复轮次
+max_review_repair_rounds = 2          # 最大审查修复轮次
+max_tool_repair_attempts = 3          # 最大工具修复尝试
+max_consecutive_tool_failures = 5     # 最大连续工具失败次数
+max_model_call_retries = 2            # 最大模型调用重试次数
+
+# =============================================================================
+# GLM-5 — Ascend 910B 本地推理
+# =============================================================================
+# 特性：200K 上下文、深度推理、长程任务（8h 自治）
+# 推理框架：MindIE / vLLM-Ascend
+# 端口：8001
+[drivers.openai_compatible.glm_5]
+base_url = "http://localhost:8001/v1"       # 本地推理端点
+api_key_env = ""                             # 本地推理无需 API Key
+model = "glm-5"                              # 模型标识
+compiler = "glm_5"                         # GLM-5 专属编译器
+max_context_tokens = 200_000                # GLM-5 200K 上下文
+max_output_tokens = 128_000                 # 最大输出 128K
+thinking_mode = "deep"                      # 默认深度推理
+long_horizon_enabled = true                 # 启用长程任务模式（8小时自治）
+timeout = 600.0                             # 本地推理超时 600s（长上下文可能较慢）
+
+# =============================================================================
+# DeepSeek V4 Flash — Ascend 950PR 本地推理
+# =============================================================================
+# 特性：1M 上下文、Flash 极简模式、快速响应
+# 推理框架：vLLM-Ascend
+# 端口：8002
+[drivers.openai_compatible.deepseek_v4_flash]
+base_url = "http://localhost:8002/v1"       # 本地推理端点
+api_key_env = ""                             # 本地推理无需 API Key
+model = "deepseek-v4-flash"                # Flash 变体
+compiler = "deepseek_v4"                    # DeepSeek V4 编译器
+compiler_variant = "flash"                  # Flash 模式：极简 prompt，快速响应
+max_context_tokens = 1_000_000              # V4 支持 1M 上下文
+max_output_tokens = 384_000                 # 最大输出 384K
+thinking_mode = "auto"                      # auto/deep/quick
+cache_aware = true                          # 启用缓存感知（V4 缓存前缀冻结优化）
+timeout = 300.0                             # Flash 模式超时 300s
+
+# =============================================================================
+# DeepSeek V4 Pro — Ascend 950PR 本地推理
+# =============================================================================
+# 特性：1M 上下文、Pro 完整模式、深度推理
+# 注意：Pro 和 Flash 可共用同一推理服务（不同模型名），或独立部署
+# 端口：8005（独立部署）或 8002（共用 Flash）
+[drivers.openai_compatible.deepseek_v4_pro]
+base_url = "http://localhost:8005/v1"       # Pro 独立端点（如共用 Flash 则改为 8002）
+api_key_env = ""                             # 本地推理无需 API Key
+model = "deepseek-v4-pro"                  # Pro 变体
+compiler = "deepseek_v4"                    # DeepSeek V4 编译器
+compiler_variant = "pro"                    # Pro 模式：完整 prompt + 推理引导
+max_context_tokens = 1_000_000              # V4 支持 1M 上下文
+max_output_tokens = 384_000                 # 最大输出 384K
+thinking_mode = "deep"                      # Pro 默认深度推理
+cache_aware = true                          # 启用缓存感知
+timeout = 600.0                             # Pro 模式推理较慢，增加超时
+
+# =============================================================================
+# MiniMax M3 — Ascend 910B 本地推理
+# =============================================================================
+# 特性：1M 上下文、原生多模态（图像+视频）、桌面操作、MSA 全文注入
+# 推理框架：MindIE / vLLM-Ascend
+# 端口：8003
+[drivers.openai_compatible.minimax_m3]
+base_url = "http://localhost:8003/v1"       # 本地推理端点
+api_key_env = ""                             # 本地推理无需 API Key
+model = "minimax-m3"                        # M3 模型标识
+compiler = "minimax_m3"                     # M3 专属编译器
+max_context_tokens = 1_000_000              # M3 支持 1M 上下文
+max_output_tokens = 384_000                 # 最大输出 384K
+multimodal_enabled = true                   # 启用多模态（图像+视频）
+desktop_enabled = true                      # 启用桌面操作
+msa_efficient = true                        # 启用 MSA 全文注入模式
+timeout = 300.0                             # 本地推理超时
+
+# =============================================================================
+# 执行流水线 — 多模型协同分配（本地部署版）
+# =============================================================================
+[execution.pipeline]
+# 设计阶段：V4-Pro（深度推理 + 完整系统提示）
+design_driver = "openai_compatible.deepseek_v4_pro"
+
+# 规划阶段：V4-Pro（结构化规划优化）
+plan_driver = "openai_compatible.deepseek_v4_pro"
+
+# 执行阶段：V4-Flash（快速代码生成 + 零成本）
+execute_driver = "openai_compatible.deepseek_v4_flash"
+
+# 审查阶段：GLM-5（深入审查 + 逻辑验证）
+review_driver = "openai_compatible.glm_5"
+
+# =============================================================================
+# Pipeline 命名配置 — 本地部署专用
+# =============================================================================
+
+# 极致性价比：全部使用 Flash（本地零成本，但保留配置以控制资源分配）
+[execution.pipeline.profiles.budget]
+description = "极致性价比：所有阶段使用 V4-Flash（最小 NPU 资源占用）"
+design_driver = "openai_compatible.deepseek_v4_flash"
+plan_driver = "openai_compatible.deepseek_v4_flash"
+execute_driver = "openai_compatible.deepseek_v4_flash"
+review_driver = "openai_compatible.deepseek_v4_flash"
+
+# 多模态模式：全部使用 M3（图像/视频/桌面操作场景）
+[execution.pipeline.profiles.multimodal]
+description = "多模态模式：所有阶段使用 M3（视觉/视频/桌面场景）"
+design_driver = "openai_compatible.minimax_m3"
+plan_driver = "openai_compatible.minimax_m3"
+execute_driver = "openai_compatible.minimax_m3"
+review_driver = "openai_compatible.minimax_m3"
+
+# 质量优先：设计/审查用 V4-Pro，规划/执行用 GLM-5
+[execution.pipeline.profiles.quality]
+description = "质量优先：设计/审查用 V4-Pro，规划/执行用 GLM-5"
+design_driver = "openai_compatible.deepseek_v4_pro"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.deepseek_v4_pro"
+
+# 长程任务：全部使用 GLM-5（8h 自治模式）
+[execution.pipeline.profiles.long_horizon]
+description = "长程任务：所有阶段使用 GLM-5（8h 自治模式）"
+design_driver = "openai_compatible.glm_5"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.glm_5"
+
+# =============================================================================
+# 智能路由配置（本地部署版）
+# =============================================================================
+[routing]
+# 多模态内容 → 强制路由到 M3
+multimodal_driver = "openai_compatible.minimax_m3"
+# 桌面操作 → 强制路由到 M3
+desktop_driver = "openai_compatible.minimax_m3"
+# 长程任务 → 强制路由到 GLM-5
+long_horizon_driver = "openai_compatible.glm_5"
+
+# 本地部署月度预算控制（零成本，但保留监控能力）
+[routing.monthly_budget]
+limit_cny = 0.0                             # 本地推理零成本
+warning_threshold = 0.8                      # 保留阈值（可用于 NPU 资源监控）
+auto_downgrade = false                       # 本地部署无需自动降级
+
+# =============================================================================
+# 熔断器配置 — 本地推理优化
+# =============================================================================
+# 本地推理的熔断策略与云 API 不同：
+# - 主要关注服务健康而非成本
+# - 失败容忍度更低（更快发现 NPU 故障）
+# - 延迟阈值更高（长上下文推理可能较慢）
+
+[circuit_breaker.budget]
+max_session_tokens = 50_000_000             # 本地推理提高 token 预算
+warning_threshold = 0.7
+critical_threshold = 0.9
+cost_per_million_input = 0.0                # 本地推理零输入成本
+cost_per_million_output = 0.0               # 本地推理零输出成本
+enable_hard_limit = false                    # 零成本无需硬限制
+auto_downgrade_model = ""                   # 本地部署无需降级
+
+[circuit_breaker.failure_breaker]
+max_consecutive = 3                          # 降低失败容忍度（更快发现 NPU 故障）
+window_seconds = 60                          # 缩短观察窗口
+
+[circuit_breaker.latency_breaker]
+warn_latency_ms = 60000                      # 本地推理延迟警告 60s（含长上下文）
+avg_window = 5                               # 平均窗口
+
+[circuit_breaker.progress_detector]
+stall_threshold = 8                          # 停滞检测阈值
+
+# =============================================================================
+# 上下文管理配置 — 本地硬件适配
+# =============================================================================
+[context_management]
+model_token_limit = 200000                   # 取所有模型中最小值（GLM-5 = 200K）
+                                             # V4/M3 的 1M 由各自的 compiler 自动处理
+reserved_for_output = 16384                  # 本地推理可增大输出预留
+reserved_for_system = 4096                   # 系统提示预留
+warn_threshold = 0.75                        # 75% 时警告
+compact_threshold = 0.85                     # 85% 时压缩
+max_inline_tool_result = 4000                # 本地推理可增大内联工具结果
+max_compacts_per_session = 5                 # 最大压缩次数
+retain_count = 8                             # 压缩时保留的消息数
+
+# =============================================================================
+# 模型降级配置
+# =============================================================================
+[model.fallback]
+driver = "openai_compatible.deepseek_v4_flash"  # 降级到 V4-Flash（最轻量）
+model = "deepseek-v4-flash"
+
+# =============================================================================
+# 权限配置 — 本地部署宽松模式
+# =============================================================================
+[permission]
+mode = "plan"                                # plan 模式（适合开发环境）
+default_effect = "allow"                     # 默认允许（本地开发环境）
+enable_ai_classifier = false                 # 本地部署可关闭 AI 分类器（节省推理）
+
+# =============================================================================
+# 工具配置
+# =============================================================================
+[tools]
+max_concurrent = 4                           # 最大并发工具数
+output_persist_threshold = 5000              # 工具输出持久化阈值
+output_dir = ".agent/outputs"                # 工具输出目录
+preview_head_lines = 20                      # 预览头行数
+preview_tail_lines = 10                      # 预览尾行数
+max_persisted_outputs = 100                  # 最大持久化输出数
+
+# =============================================================================
+# 文件安全配置
+# =============================================================================
+[file_safety]
+enable_hash_validation = true                # 启用哈希校验
+max_history_per_file = 10                    # 每个文件最大历史版本
+
+# =============================================================================
+# 恢复配置
+# =============================================================================
+[recovery]
+max_output_tokens_recovery = 3               # 输出 token 超限恢复次数
+max_context_overflow_recovery = 2            # 上下文溢出恢复次数
+
+# =============================================================================
+# 流式配置
+# =============================================================================
+[streaming]
+mode = "auto"                                # 流式模式：auto/streaming/batch
+max_streaming_retries = 2                    # 流式重试次数
+
+# =============================================================================
+# 子 Agent 协调配置
+# =============================================================================
+[coordination]
+max_concurrent_sub_agents = 2                # 本地推理减少并发子 Agent
+max_sub_agent_steps = 50                     # 子 Agent 最大步数
+mailbox_max_size = 100                       # 邮箱最大容量
+async_notification_timeout = 30.0            # 异步通知超时
+
+# =============================================================================
+# 会话配置
+# =============================================================================
+[session]
+session_dir = ".agent/sessions"              # 会话存储目录
+max_sessions = 50                            # 最大会话数
+auto_save = true                             # 自动保存
+max_age_days = 30                            # 会话最大保留天数
+
+# =============================================================================
+# AgentLoop 配置
+# =============================================================================
+[agentd]
+max_tool_steps = 30                          # 最大工具步数
+repetition_window = 3                        # 重复检测窗口
+repetition_similarity_threshold = 0.9        # 重复相似度阈值
+cross_tool_repetition_limit = 3              # 跨工具重复限制
+polling_detection_limit = 3                  # 轮询检测限制
+periodic_check_interval = 5                  # 定期检查间隔
+tool_execution_timeout = 120.0               # 工具执行超时

@@ -1,0 +1,112 @@
+# TerAgent 配置模板 — DeepSeek V4 / MiniMax M3 / GLM-5 深度适配
+# 版本：v1.0 | 基于 design.md 设计方案
+
+# =============================================================================
+# DeepSeek V4 — Flash (轻量任务默认模型)
+# =============================================================================
+[drivers.openai_compatible.deepseek_v4_flash]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-flash"
+compiler = "deepseek_v4"
+compiler_variant = "flash"              # Flash 模式：极简 prompt，快速响应
+max_context_tokens = 1_000_000          # V4 支持 1M 上下文
+max_output_tokens = 384_000             # V4 最大 384K 输出
+thinking_mode = "auto"                  # auto/deep/quick
+cache_aware = true                      # 启用缓存感知（V4 缓存价格差 12x）
+
+# =============================================================================
+# DeepSeek V4 — Pro (复杂任务专用)
+# =============================================================================
+[drivers.openai_compatible.deepseek_v4_pro]
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-v4-pro"
+compiler = "deepseek_v4"
+compiler_variant = "pro"                # Pro 模式：完整 prompt + 推理引导
+max_context_tokens = 1_000_000
+max_output_tokens = 384_000
+thinking_mode = "deep"                  # Pro 默认深度推理
+cache_aware = true
+
+# =============================================================================
+# MiniMax M3 — 多模态模型
+# =============================================================================
+[drivers.openai_compatible.minimax_m3]
+base_url = "https://api.minimaxi.com/v1"
+api_key_env = "MINIMAX_API_KEY"
+model = "minimax-m3"
+compiler = "minimax_m3"
+max_context_tokens = 1_000_000          # M3 支持 1M 上下文
+max_output_tokens = 384_000
+multimodal_enabled = true               # 启用多模态（图像+视频）
+desktop_enabled = true                  # 启用桌面操作
+msa_efficient = true                    # MSA 全文注入模式
+
+# =============================================================================
+# GLM-5 — 长程任务模型
+# =============================================================================
+[drivers.openai_compatible.glm_5]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5"
+compiler = "glm_5"
+max_context_tokens = 200_000            # GLM-5 200K 上下文
+max_output_tokens = 128_000
+thinking_mode = "deep"                  # GLM-5 默认深度推理
+long_horizon_enabled = true             # 启用长程任务模式（8小时自治）
+
+# =============================================================================
+# 执行流水线 — 多模型协同分配
+# =============================================================================
+[execution.pipeline]
+# 设计阶段：V4-Pro（深度推理 + 完整系统提示）
+design_driver = "openai_compatible.deepseek_v4_pro"
+
+# 规划阶段：V4-Pro（结构化规划优化）
+plan_driver = "openai_compatible.deepseek_v4_pro"
+
+# 执行阶段：V4-Flash（快速代码生成 + 低成本）
+execute_driver = "openai_compatible.deepseek_v4_flash"
+
+# 审查阶段：GLM-5（深入审查 + 逻辑验证）
+review_driver = "openai_compatible.glm_5"
+
+# =============================================================================
+# 智能路由配置 (Phase 3: ModelRouter)
+# =============================================================================
+[routing]
+# 多模态内容 → 强制路由到 M3
+multimodal_driver = "openai_compatible.minimax_m3"
+# 桌面操作 → 强制路由到 M3
+desktop_driver = "openai_compatible.minimax_m3"
+# 长程任务 → 强制路由到 GLM-5
+long_horizon_driver = "openai_compatible.glm_5"
+
+# 月度预算控制
+[routing.monthly_budget]
+limit_cny = 500.0                          # 月度预算上限 ¥500
+warning_threshold = 0.8                    # 80% 时告警
+auto_downgrade = true                      # 超预算自动降级到 V4-Flash
+
+# Pipeline 命名配置
+[execution.pipeline.profiles.budget]
+description = "极致性价比：所有阶段使用 V4-Flash"
+design_driver = "openai_compatible.deepseek_v4_flash"
+plan_driver = "openai_compatible.deepseek_v4_flash"
+execute_driver = "openai_compatible.deepseek_v4_flash"
+review_driver = "openai_compatible.deepseek_v4_flash"
+
+[execution.pipeline.profiles.multimodal]
+description = "多模态模式：所有阶段使用 M3"
+design_driver = "openai_compatible.minimax_m3"
+plan_driver = "openai_compatible.minimax_m3"
+execute_driver = "openai_compatible.minimax_m3"
+review_driver = "openai_compatible.minimax_m3"
+
+[execution.pipeline.profiles.quality]
+description = "质量优先：设计/审查用 V4-Pro，规划/执行用 GLM-5"
+design_driver = "openai_compatible.deepseek_v4_pro"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.deepseek_v4_pro"

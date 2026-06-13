@@ -3,11 +3,11 @@
 Represents the complete configuration for a single model driver.
 
 New config format (agent.toml):
-    [drivers.openai_compatible.glm]
+    [drivers.openai_compatible.glm_5]
     base_url = "https://open.bigmodel.cn/api/paas/v4"
     api_key_env = "GLM_API_KEY"
-    model = "glm-5.1"
-    compiler = "glm"
+    model = "glm-5"
+    compiler = "glm_5"
 
     [drivers.anthropic_native.claude]
     base_url = "https://api.anthropic.com/v1"
@@ -43,12 +43,12 @@ class DriverConfig:
             Values: "glm" | "claude" | "deepseek" | "step" | custom
         base_url: API endpoint URL
         api_key: Resolved API key (from env var, .env, or plaintext — never stored in config)
-        model: Model version string (e.g., "glm-5.1", "claude-sonnet-4-20250514")
+        model: Model version string (e.g., "glm-5", "claude-sonnet-4-20250514")
         compiler: Compiler name — determines how to compile TAP prompts.
             Values: "default" | "glm" | "anthropic" | "deepseek"
         timeout: HTTP request timeout in seconds
         extra_headers: Additional HTTP headers (for gateway auth, etc.)
-        full_name: Fully qualified driver name (e.g., "openai_compatible.glm")
+        full_name: Fully qualified driver name (e.g., "openai_compatible.glm_5")
         api_key_env: Environment variable name for the API key (for reference/debugging)
         enable_fake_tools: Whether to inject fake tools for distillation detection
     """
@@ -64,6 +64,17 @@ class DriverConfig:
     full_name: str = ""
     api_key_env: str = ""
     enable_fake_tools: bool = False
+
+    # --- Extended fields for DeepSeek V4 / MiniMax M3 / GLM-5 ---
+    compiler_variant: str = ""              # "flash" | "pro" (DeepSeek V4 specific)
+    max_context_tokens: int = 0            # 0 = auto-detect from compiler
+    max_output_tokens: int = 0             # 0 = use compiled.max_tokens default
+    thinking_mode: str = ""                # "deep" | "quick" | "auto" | "" (default: auto)
+    cache_aware: bool = False              # Enable cache-aware prompt layout (V4)
+    multimodal_enabled: bool = False       # Enable multimodal content (M3)
+    desktop_enabled: bool = False          # Enable desktop operations (M3)
+    long_horizon_enabled: bool = False     # Enable long-horizon task mode (GLM-5)
+    msa_efficient: bool = False            # Enable MSA full-text injection (M3)
 
     def __post_init__(self) -> None:
         """Derive full_name if not explicitly set"""
@@ -86,7 +97,7 @@ class DriverConfig:
         Returns:
             Dict that can be unpacked into create_provider(**kwargs)
         """
-        return {
+        kwargs = {
             "compiler": self.compiler,
             "adapter": self.adapter,
             "model": self.model,
@@ -98,11 +109,32 @@ class DriverConfig:
             "enable_fake_tools": self.enable_fake_tools,
         }
 
+        # Pass compiler_variant if set (DeepSeek V4)
+        if self.compiler_variant:
+            kwargs["compiler_variant"] = self.compiler_variant
+
+        return kwargs
+
+    @property
+    def is_deepseek_v4(self) -> bool:
+        """Whether this driver is for DeepSeek V4"""
+        return self.compiler in ("deepseek_v4", "deepseek_v4_flash", "deepseek_v4_pro")
+
+    @property
+    def is_glm_5(self) -> bool:
+        """Whether this driver is for GLM-5"""
+        return self.compiler == "glm_5"
+
+    @property
+    def is_minimax_m3(self) -> bool:
+        """Whether this driver is for MiniMax M3"""
+        return self.compiler == "minimax_m3"
+
     def __repr__(self) -> str:
         # Mask API key in repr for security
         masked_key = "***" if self.api_key else "(empty)"
-        return (
-            f"DriverConfig("
+        parts = [
+            f"DriverConfig(",
             f"full_name={self.full_name!r}, "
             f"adapter={self.adapter!r}, "
             f"identity={self.identity!r}, "
@@ -110,5 +142,8 @@ class DriverConfig:
             f"model={self.model!r}, "
             f"base_url={self.base_url!r}, "
             f"api_key={masked_key}, "
-            f"timeout={self.timeout})"
-        )
+            f"timeout={self.timeout})",
+        ]
+        if self.compiler_variant:
+            parts.insert(-1, f"variant={self.compiler_variant!r}, ")
+        return "".join(parts)

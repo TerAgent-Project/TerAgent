@@ -48,6 +48,11 @@ from teragent.coordination.message_bus import AgentMessageBus, AgentMessage, BRO
 from teragent.coordination.sub_agent_manager import SubAgentManager, AgentMode
 from teragent.hooks.manager import HookManager
 from teragent.session.persistence import SessionPersistence
+from teragent.long_horizon.task_manager import LongHorizonTaskManager
+from teragent.long_horizon.types import LongHorizonResult
+from teragent.core.tap import LongHorizonConfig
+from teragent.router.model_router import ModelRouter, RoutingDecision, RoutingReason
+from teragent.reliability.budget import CrossModelCostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,9 @@ class AgentLoop:
         hook_manager: HookManager | None = None,
         session_persistence: SessionPersistence | None = None,
         streaming_executor: StreamingToolExecutor | None = None,
+        long_horizon_manager: LongHorizonTaskManager | None = None,
+        model_router: ModelRouter | None = None,
+        cost_tracker: CrossModelCostTracker | None = None,
     ) -> None:
         # --- Core dependencies ---
         self._model = model
@@ -109,6 +117,9 @@ class AgentLoop:
         self._hook_manager = hook_manager
         self._session_persistence = session_persistence
         self._streaming_executor = streaming_executor
+        self._long_horizon_manager = long_horizon_manager
+        self._model_router = model_router
+        self._cost_tracker = cost_tracker
 
         # --- Validate config ---
         validation_warnings = self._config.validate()
@@ -1035,6 +1046,201 @@ class AgentLoop:
             parts.append(f"Metadata: {meta_str}")
 
         return "\n".join(parts) if parts else "Tool completed with no output."
+
+    # ==================================================================
+    # Long-horizon task support (GLM-5)
+    # ==================================================================
+
+    async def run_long_task(
+        self,
+        goal: str,
+        config: LongHorizonConfig | None = None,
+    ) -> LongHorizonResult:
+        """执行长程任务（GLM-5 的8小时持续工作能力）
+
+        创建 LongHorizonTaskManager 并委托给它执行。
+        如果 AgentLoop 已有 long_horizon_manager，则复用其配置。
+
+        Args:
+            goal: 大目标描述
+            config: 长程任务配置，默认使用 LongHorizonConfig()
+
+        Returns:
+            LongHorizonResult 长程任务最终结果
+        """
+        # 如果已有 manager，复用其配置
+        if self._long_horizon_manager is not None:
+            manager = self._long_horizon_manager
+            # 更新目标
+            manager.goal = goal
+            if config is not None:
+                manager.config = config
+        else:
+            manager = LongHorizonTaskManager(
+                goal=goal,
+                model_provider=self._model,
+                config=config,
+            )
+            self._long_horizon_manager = manager
+
+        return await manager.execute_long_task()
+
+    # ==================================================================
+    # Model routing (P3-1) + Cost tracking (P3-3)
+    # ==================================================================
+
+    def route_request(self, request: TAPRequest) -> RoutingDecision:
+        """Route a TAP request to the optimal model using ModelRouter
+
+        If ModelRouter is configured, uses intelligent routing based on
+        intent, multimodal, context length, long-horizon, cost, and
+        degradation. Otherwise, returns the default model.
+
+        Args:
+            request: The TAP request to route
+
+        Returns:
+            RoutingDecision with selected driver and trace
+        """
+        if self._model_router is None:
+            # No router configured → use default model
+            return RoutingDecision(
+                selected_driver="default",
+                selected_compiler=self._model.compiler.__class__.__name__,
+                reason=RoutingReason.EXPLICIT,
+                intent=request.meta.get("intent", "chat"),
+            )
+
+        return self._model_router.route(request)
+
+    def route_request_for_stage(self, stage: str, request: TAPRequest) -> RoutingDecision:
+        """Route a TAP request for a specific pipeline stage
+
+        Uses the active PipelineProfile to determine the driver for
+        the given stage, then applies override checks.
+
+        Args:
+            stage: Pipeline stage ("design", "plan", "execute", "review")
+            request: The TAP request to route
+
+        Returns:
+            RoutingDecision with pipeline-based routing
+        """
+        if self._model_router is None:
+            return RoutingDecision(
+                selected_driver="default",
+                selected_compiler=self._model.compiler.__class__.__name__,
+                intent=stage,
+            )
+
+        return self._model_router.route_for_stage(stage, request)
+
+    async def execute_routed_tap(self, request: TAPRequest) -> Any:
+        """Execute a TAP request with intelligent model routing
+
+        Routes the request to the optimal model using ModelRouter,
+        then executes it with the selected provider.
+
+        Args:
+            request: The TAP request to route and execute
+
+        Returns:
+            TAPResponse from the selected provider
+
+        Raises:
+            RuntimeError: If no suitable provider is found
+        """
+        from teragent.core.tap import TAPResponse
+
+        decision = self.route_request(request)
+
+        # Get provider for selected driver
+        provider = None
+        if self._model_router is not None:
+            provider = self._model_router.get_provider(decision.selected_driver)
+
+        if provider is None:
+            # Fallback to default model
+            provider = self._model
+
+        # Execute with selected provider
+        try:
+            response = await provider.execute_tap_with_retry(request)
+
+            # Track cost if cost_tracker is configured
+            if self._cost_tracker is not None:
+                self._cost_tracker.record_from_tap_response(
+                    driver_name=decision.selected_driver,
+                    compiler=decision.selected_compiler,
+                    model=provider.model,
+                    intent=decision.intent,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    cache_hit_tokens=response.cache_hit_tokens,
+                    latency_ms=0.0,  # Will be filled by retry method
+                    success=True,
+                    pricing=self._model_router.routing_table.get_pricing(decision.selected_driver) if self._model_router else {},
+                )
+
+            return response
+
+        except Exception as e:
+            # Record failed cost
+            if self._cost_tracker is not None:
+                self._cost_tracker.record_from_tap_response(
+                    driver_name=decision.selected_driver,
+                    compiler=decision.selected_compiler,
+                    model=provider.model,
+                    intent=decision.intent,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    success=False,
+                )
+            raise
+
+    def switch_pipeline_profile(self, profile_name: str) -> bool:
+        """Switch the active pipeline profile for model routing
+
+        Args:
+            profile_name: Profile name ("default", "budget", "multimodal", or custom)
+
+        Returns:
+            True if the profile was found and activated, False otherwise
+        """
+        if self._model_router is None:
+            logger.warning("Cannot switch pipeline profile: ModelRouter not configured")
+            return False
+        return self._model_router.pipeline_manager.set_active_profile(profile_name)
+
+    @property
+    def active_pipeline_profile(self) -> str:
+        """Name of the currently active pipeline profile"""
+        if self._model_router is None:
+            return "(no router)"
+        return self._model_router.pipeline_manager.active_profile_name
+
+    @property
+    def model_router(self) -> ModelRouter | None:
+        """Access the ModelRouter (if configured)"""
+        return self._model_router
+
+    @property
+    def cost_tracker(self) -> CrossModelCostTracker | None:
+        """Access the CrossModelCostTracker (if configured)"""
+        return self._cost_tracker
+
+    def get_cost_report(self, group_by: str = "model") -> dict:
+        """Generate a cost report from the CrossModelCostTracker
+
+        Args:
+            group_by: Grouping dimension — "model", "intent", "date", or "driver"
+
+        Returns:
+            Cost report dict, or empty dict if cost_tracker not configured
+        """
+        if self._cost_tracker is None:
+            return {}
+        return self._cost_tracker.generate_report(group_by=group_by)
 
     def reset(self) -> None:
         """Reset the agent loop state for a new conversation."""

@@ -71,9 +71,9 @@ from teragent import ModelProvider, create_provider
 
 # Create via factory function
 provider = create_provider(
-    compiler="glm",
+    compiler="glm_5",
     adapter="openai_compatible",
-    model="glm-5.1",
+    model="glm-5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
 )
@@ -568,6 +568,738 @@ messages = persistence.restore(session_id)
 # List sessions
 sessions = persistence.list_sessions()
 ```
+
+## Router Module (`teragent.router`)
+
+### RoutingReason
+
+```python
+from teragent.router import RoutingReason
+
+# Enum values indicating why a model was selected
+RoutingReason.INTENT                    # Default intent-based routing
+RoutingReason.MULTIMODAL_OVERRIDE       # Has multimodal content → M3
+RoutingReason.DESKTOP_OVERRIDE          # Has desktop context → M3
+RoutingReason.VIDEO_OVERRIDE            # Has video content → M3
+RoutingReason.CONTEXT_LENGTH_OVERRIDE   # Context >200K → V4/M3
+RoutingReason.LONG_HORIZON_OVERRIDE     # Long-horizon task → GLM-5
+RoutingReason.COST_OPTIMIZATION         # Budget constraint → cheaper model
+RoutingReason.DEGRADATION               # Primary unavailable → fallback
+RoutingReason.PIPELINE_PROFILE          # Explicit pipeline profile assignment
+RoutingReason.EXPLICIT                  # User explicitly specified model
+```
+
+### RoutingDecision
+
+```python
+from teragent.router import RoutingDecision
+
+decision = RoutingDecision(
+    selected_driver="openai_compatible.deepseek_v4_pro",
+    selected_compiler="deepseek_v4",
+    reason=RoutingReason.INTENT,
+    intent="design",
+)
+```
+
+**Properties:**
+- `selected_driver: str` — Full driver name (e.g., `"openai_compatible.deepseek_v4_pro"`)
+- `selected_compiler: str` — Compiler name (e.g., `"deepseek_v4"`)
+- `reason: RoutingReason` — Primary routing reason
+- `intent: str` — The request's intent type
+- `trace: list[tuple[str, str, str]]` — Ordered list of (reason, candidate, accepted/rejected) tuples
+- `timestamp: float` — Decision timestamp (epoch seconds)
+- `estimated_cost: float` — Estimated cost for this request
+- `context_tokens: int` — Estimated context token count
+
+**Methods:**
+- `add_trace(reason, candidate, result)` — Append a trace entry for debugging
+
+### RoutingTable
+
+```python
+from teragent.router import RoutingTable
+
+table = RoutingTable(
+    multimodal_driver="openai_compatible.minimax_m3",
+    desktop_driver="openai_compatible.minimax_m3",
+    long_horizon_driver="openai_compatible.glm_5",
+)
+```
+
+**Key attributes:**
+- `intent_routing: dict[str, str]` — Maps intent → default driver name
+- `multimodal_driver: str` — Driver for multimodal content (default: M3)
+- `desktop_driver: str` — Driver for desktop context (default: M3)
+- `long_horizon_driver: str` — Driver for long-horizon tasks (default: GLM-5)
+- `long_context_candidates: list[str]` — Models supporting >200K context
+- `cost_fallback_order: list[str]` — Cheapest-to-most-expensive model order
+- `degradation_map: dict[str, str]` — Primary → fallback mapping
+- `model_pricing: dict[str, dict[str, float]]` — Per-model CNY pricing per million tokens
+- `max_context_per_model: dict[str, int]` — Per-model max context tokens
+- `compiler_map: dict[str, str]` — Driver name → compiler name mapping
+
+**Methods:**
+- `resolve_compiler(driver_name) -> str` — Resolve compiler name from driver name
+- `get_intent_driver(intent) -> str` — Get default driver for an intent type
+- `get_pricing(driver_name) -> dict[str, float]` — Get pricing dict for a model
+- `from_dict(data) -> RoutingTable` — Create RoutingTable from a config dict
+
+### ModelRouter
+
+```python
+from teragent.router import ModelRouter, RoutingTable, RoutingDecision
+
+router = ModelRouter(
+    available_providers={"openai_compatible.glm_5": glm_provider, ...},
+    routing_table=RoutingTable(),
+)
+
+decision = router.route(tap_request)
+provider = router.get_provider(decision.selected_driver)
+```
+
+**Methods:**
+- `route(request) -> RoutingDecision` — Route a TAP request through the 6-step decision flow
+- `route_for_stage(stage, request) -> RoutingDecision` — Route using active pipeline profile for a stage
+- `get_decision_log() -> list[RoutingDecision]` — Get the log of all routing decisions
+- `get_provider(driver_name) -> ModelProvider | None` — Get a provider by driver name
+- `set_monthly_budget(limit_cny, warning_threshold, auto_downgrade)` — Configure monthly budget
+
+### PipelineProfile
+
+```python
+from teragent.router import PipelineProfile
+
+profile = PipelineProfile(
+    name="default",
+    description="Default pipeline configuration",
+    design_driver="openai_compatible.deepseek_v4_pro",
+    plan_driver="openai_compatible.glm_5",
+    execute_driver="openai_compatible.glm_5",
+    review_driver="openai_compatible.deepseek_v4_pro",
+)
+```
+
+**Methods:**
+- `get_driver_for_stage(stage) -> str` — Get driver name for a pipeline stage
+- `from_dict(name, data) -> PipelineProfile` — Create from a config dict
+
+### PipelineManager
+
+```python
+from teragent.router import PipelineManager, PipelineProfile
+
+pm = PipelineManager()
+
+# Register profiles
+pm.register_profile(PipelineProfile(name="budget", ...))
+
+# Switch profiles at runtime
+pm.set_active_profile("budget")
+
+# Get driver for a stage
+driver = pm.get_driver("execute")
+```
+
+**Methods:**
+- `register_profile(profile) -> None` — Register a pipeline profile
+- `set_active_profile(name) -> bool` — Switch to a named profile (returns True if found)
+- `get_driver(stage) -> str` — Get driver name for a stage from active profile
+- `list_profiles() -> list[str]` — List all registered profile names
+- `get_profile(name) -> PipelineProfile | None` — Get a profile by name
+- `from_config(config, routing_table) -> PipelineManager` — Create from TOML config dict
+
+**Properties:**
+- `active_profile_name -> str` — Name of the currently active profile
+- `active_profile -> PipelineProfile` — The currently active PipelineProfile
+
+---
+
+## Long-Horizon Module (`teragent.long_horizon`)
+
+### SubGoal
+
+```python
+from teragent.long_horizon import SubGoal
+
+goal = SubGoal(
+    id="sg_1",
+    description="Design database schema",
+    completion_criteria="All tables defined with proper constraints",
+    estimated_steps=10,
+    dependencies=["sg_0"],  # Depends on sg_0
+    status="pending",        # pending | in_progress | completed | failed
+)
+```
+
+**Attributes:**
+- `id: str` — Unique identifier
+- `description: str` — Sub-goal description
+- `completion_criteria: str` — Measurable completion criteria
+- `estimated_steps: int` — Estimated number of steps
+- `dependencies: list[str]` — IDs of sub-goals this depends on (DAG topology)
+- `status: str` — Current status: `pending` | `in_progress` | `completed` | `failed`
+
+### PhaseResult
+
+```python
+from teragent.long_horizon import PhaseResult
+
+result = PhaseResult(
+    sub_goal_id="sg_1",
+    success=True,
+    result_text="Database schema designed with 5 tables...",
+    steps_taken=8,
+    files_created=["src/models/user.py", "src/models/role.py"],
+    files_modified=["src/db/init.py"],
+    errors=[],
+)
+```
+
+**Attributes:**
+- `sub_goal_id: str` — Corresponding sub-goal ID
+- `success: bool` — Whether the phase succeeded
+- `result_text: str` — Model output text
+- `steps_taken: int` — Steps consumed in this phase
+- `files_created: list[str]` — Files created
+- `files_modified: list[str]` — Files modified
+- `errors: list[str]` — Error messages
+
+### LongHorizonResult
+
+```python
+from teragent.long_horizon import LongHorizonResult
+
+result = LongHorizonResult(
+    task_id="task_001",
+    goal="Implement user management system",
+    success=True,
+    total_steps=120,
+    total_elapsed_minutes=95.5,
+    completed_sub_goals=5,
+    total_sub_goals=5,
+    strategy_switches=1,
+    phase_results=[...],
+    final_summary="All sub-goals completed successfully",
+    checkpoints_saved=6,
+)
+```
+
+**Attributes:**
+- `task_id: str` — Unique task identifier
+- `goal: str` — Original goal description
+- `success: bool` — Overall success
+- `total_steps: int` — Total steps consumed
+- `total_elapsed_minutes: float` — Total elapsed time
+- `completed_sub_goals: int` — Completed sub-goals count
+- `total_sub_goals: int` — Total sub-goals count
+- `strategy_switches: int` — Number of strategy switches
+- `phase_results: list[PhaseResult]` — Detailed phase results
+- `final_summary: str` — Final summary text
+- `checkpoints_saved: int` — Number of checkpoints saved
+
+### LongHorizonTaskManager
+
+```python
+from teragent.long_horizon import LongHorizonTaskManager
+from teragent.core.tap import LongHorizonConfig
+
+manager = LongHorizonTaskManager(
+    goal="Implement a complete user management system",
+    model_provider=glm_provider,
+    config=LongHorizonConfig(max_duration_hours=4),
+)
+
+result = await manager.execute_long_task()
+```
+
+**Methods:**
+- `decompose_goal() -> list[SubGoal]` — Break down the goal into sub-goals
+- `execute_phase(sub_goal) -> PhaseResult` — Execute one sub-goal phase
+- `execute_long_task() -> LongHorizonResult` — Run the full long-horizon task
+- `save_checkpoint() -> str` — Save current state as checkpoint
+- `evaluate_progress() -> SelfEvaluationResult` — Run self-evaluation
+- `recover_from_checkpoint(checkpoint_id) -> bool` — Resume from checkpoint
+
+### Checkpoint & CheckpointStore
+
+```python
+from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
+
+store = CheckpointStore(base_dir=".teragent/checkpoints")
+
+# Save checkpoint
+checkpoint = Checkpoint(
+    checkpoint_id=store.generate_checkpoint_id(),
+    task_id="task_001",
+    timestamp=store.now_iso(),
+    phase="executing",
+    completed_sub_goals=["sg_0", "sg_1"],
+    current_sub_goal="sg_2",
+    steps_completed=50,
+    elapsed_minutes=30.0,
+    strategy_switches=0,
+    state_data={},
+)
+checkpoint_id = await store.save(checkpoint)
+
+# Load latest
+latest = await store.load_latest("task_001")
+
+# List all
+checkpoints = await store.list_checkpoints("task_001")
+
+# Cleanup old (keep last 5)
+deleted = await store.cleanup("task_001", keep_last=5)
+```
+
+### SelfEvaluator
+
+```python
+from teragent.long_horizon import SelfEvaluator, SelfEvaluationResult
+
+evaluator = SelfEvaluator(
+    model_provider=provider,
+    evaluation_interval_steps=10,
+    evaluation_interval_minutes=30.0,
+)
+
+if evaluator.should_evaluate(steps_since_last=10, minutes_since_last=30.0):
+    result = await evaluator.evaluate(goal, progress_report, recent_results)
+    if result.should_switch_strategy:
+        # Trigger strategy switch
+        ...
+```
+
+**SelfEvaluationResult attributes:**
+- `goal_alignment: int` — Goal alignment score (1-5)
+- `output_quality: int` — Output quality score (1-5)
+- `bottleneck_identified: str` — Bottleneck description
+- `strategy_review: str` — Strategy effectiveness review
+- `next_step_plan: str` — Recommended next steps
+- `overall_score: float` — Weighted overall score
+- `should_switch_strategy: bool` — Whether to switch strategy
+- `raw_response: str` — Raw model response text
+
+**SelfEvaluator methods:**
+- `evaluate(goal, progress_report, recent_results) -> SelfEvaluationResult` — Run self-evaluation
+- `should_evaluate(steps_since_last, minutes_since_last) -> bool` — Check if evaluation is due
+- `reset_evaluation_timer(current_steps)` — Reset evaluation timer
+
+### StrategySwitcher
+
+```python
+from teragent.long_horizon import StrategySwitcher, StrategySwitchRecord
+
+switcher = StrategySwitcher(
+    model_provider=provider,
+    stagnation_threshold=3,
+    no_progress_threshold=5,
+    similarity_threshold=0.8,
+)
+
+is_stagnant, reason = switcher.detect_stagnation(recent_results, recent_steps)
+if is_stagnant:
+    new_strategy, record = await switcher.switch_strategy(
+        current_strategy, reason, goal, progress_report
+    )
+```
+
+**StrategySwitchRecord attributes:**
+- `timestamp: str` — ISO format timestamp
+- `reason: str` — Switch reason
+- `previous_strategy: str` — Previous strategy description
+- `new_strategy: str` — New strategy description
+- `risk_assessment: str` — Risk assessment
+- `effectiveness: str` — Post-hoc effectiveness evaluation
+
+**StrategySwitcher methods:**
+- `detect_stagnation(recent_results, recent_steps) -> (bool, str)` — Detect stagnation
+- `switch_strategy(current_strategy, reason, goal, progress_report) -> (str, StrategySwitchRecord)` — Execute strategy switch
+- `get_switch_history() -> list[StrategySwitchRecord]` — Get switch history
+- `assess_switch_effectiveness(record_index, subsequent_results) -> str` — Evaluate switch effectiveness
+
+**Properties:**
+- `current_strategy -> str` — Current strategy description
+
+### ProgressTracker & ProgressReport
+
+```python
+from teragent.long_horizon.progress import ProgressTracker, ProgressReport
+
+tracker = ProgressTracker(task_id="task_1", goal="Implement user system")
+tracker.start_sub_goal("sg_1", "Design database")
+tracker.record_step("Create User table")
+tracker.complete_sub_goal("sg_1", "User table created")
+report = tracker.get_report()
+```
+
+**ProgressReport attributes:**
+- `task_id: str` — Task identifier
+- `goal: str` — Original goal
+- `total_sub_goals: int` — Total sub-goals
+- `completed_sub_goals: int` — Completed sub-goals
+- `current_phase: str` — Current phase (`planning`/`executing`/`evaluating`/`stagnant`)
+- `steps_completed: int` — Steps taken
+- `elapsed_minutes: float` — Elapsed time
+- `strategy_switches: int` — Strategy switch count
+- `estimated_remaining_minutes: float` — Estimated time remaining
+
+---
+
+## Budget Module (`teragent.reliability.budget`)
+
+### StepBudget
+
+```python
+from teragent.reliability.budget import StepBudget
+
+budget = StepBudget(max_steps=50)
+
+if budget.consume():  # Returns True if budget remaining
+    # Do work
+    pass
+
+budget.resume(extra_steps=10)  # Add more steps after user confirmation
+```
+
+**Properties:**
+- `current_steps -> int` — Steps consumed
+- `remaining -> int` — Steps remaining
+- `exhausted -> bool` — Whether budget is exhausted
+
+### CostRecord
+
+```python
+from teragent.reliability.budget import CostRecord
+
+record = CostRecord(
+    driver_name="openai_compatible.deepseek_v4_pro",
+    compiler="deepseek_v4",
+    model="deepseek-v4-pro",
+    intent="design",
+    prompt_tokens=5000,
+    completion_tokens=2000,
+    cache_hit_tokens=3000,
+    cost_cny=0.052,
+    cost_saved_cny=0.012,
+    success=True,
+    latency_ms=3500.0,
+)
+```
+
+**Properties:**
+- `date_str -> str` — Date string (YYYY-MM-DD) for date-dimension reporting
+- `total_tokens -> int` — Total tokens (prompt + completion)
+
+### MonthlyBudgetConfig
+
+```python
+from teragent.reliability.budget import MonthlyBudgetConfig
+
+config = MonthlyBudgetConfig(
+    limit_cny=500.0,                     # Monthly budget cap (0 = no limit)
+    warning_threshold=0.8,                # Warn at 80%
+    critical_threshold=1.0,               # Auto-downgrade at 100%
+    auto_downgrade_driver="openai_compatible.deepseek_v4_flash",  # Fallback driver
+    notify_on_warning=True,               # Emit events on warning
+)
+```
+
+### CrossModelCostTracker
+
+```python
+from teragent.reliability.budget import CrossModelCostTracker, MonthlyBudgetConfig, CostRecord
+
+tracker = CrossModelCostTracker()
+tracker.set_monthly_budget(MonthlyBudgetConfig(limit_cny=500.0))
+
+# Record a cost
+budget_status = tracker.record(CostRecord(
+    driver_name="openai_compatible.deepseek_v4_pro",
+    compiler="deepseek_v4",
+    model="deepseek-v4-pro",
+    intent="design",
+    prompt_tokens=5000,
+    completion_tokens=2000,
+    cost_cny=0.052,
+))
+
+# Record from TAP response (convenience method)
+status = tracker.record_from_tap_response(
+    driver_name="openai_compatible.deepseek_v4_pro",
+    compiler="deepseek_v4",
+    model="deepseek-v4-pro",
+    intent="design",
+    prompt_tokens=5000,
+    completion_tokens=2000,
+    cache_hit_tokens=3000,
+    latency_ms=3500.0,
+)
+
+# Check budget
+status = tracker.check_budget()
+# → {"level": "ok"|"warning"|"critical"|"exhausted", "utilization": float, ...}
+
+# Generate report
+report = tracker.generate_report(group_by="model")
+model_stats = tracker.get_model_stats("openai_compatible.deepseek_v4_pro")
+all_stats = tracker.get_all_model_stats()
+cache_savings = tracker.get_cache_savings()
+```
+
+**Key methods:**
+- `record(record) -> dict` — Record a cost entry and check budget
+- `record_from_tap_response(...) -> dict` — Record from TAP response data (calculates cost)
+- `check_budget() -> dict` — Check current budget status
+- `set_monthly_budget(config)` — Configure monthly budget
+- `generate_report(group_by, start_date, end_date) -> dict` — Generate cost report
+- `get_model_stats(driver_name) -> dict` — Get stats for a specific model
+- `get_all_model_stats() -> dict` — Get stats for all models
+- `get_cache_savings() -> dict` — Get cache savings statistics
+
+**Properties:**
+- `is_budget_warning -> bool` — Whether budget is in warning state
+- `is_budget_exhausted -> bool` — Whether budget is exhausted
+- `should_auto_downgrade -> bool` — Whether to auto-downgrade
+- `total_records -> int` — Number of cost records
+
+---
+
+## Circuit Breaker Module (`teragent.reliability.circuit_breaker`)
+
+### ModelCircuitBreakerManager
+
+```python
+from teragent.reliability.circuit_breaker import ModelCircuitBreakerManager, ModelBreakerConfig
+
+manager = ModelCircuitBreakerManager()
+
+# Record a failure (returns fallback model name if breaker just opened)
+fallback = manager.record_failure("deepseek_v4_pro", "API timeout")
+
+# Record a success
+manager.record_success("deepseek_v4_pro")
+
+# Check if a model can be called
+if manager.can_call("deepseek_v4_pro"):
+    # Safe to call
+    ...
+
+# Get fallback model
+fallback = manager.get_fallback("deepseek_v4_pro")
+
+# Get all model states
+states = manager.get_all_states()
+# → {"deepseek_v4_pro": "closed", "minimax_m3": "half_open", ...}
+
+# Reset a specific model or all
+manager.reset("deepseek_v4_pro")  # Reset specific
+manager.reset()                    # Reset all
+```
+
+### ModelBreakerConfig
+
+```python
+from teragent.reliability.circuit_breaker import ModelBreakerConfig
+
+config = ModelBreakerConfig(
+    model_name="deepseek_v4_pro",
+    max_consecutive_failures=5,       # Open after N consecutive failures
+    window_seconds=300.0,            # Sliding window duration
+    cooldown_seconds=60.0,           # Time before half-open transition
+    failure_threshold_percent=0.5,   # Open if >50% failures in window
+    half_open_max_calls=3,           # Test calls allowed in half-open
+)
+```
+
+---
+
+## Recovery Module (`teragent.reliability.recovery`)
+
+### DegradationChain
+
+```python
+from teragent.reliability.recovery import DegradationChain
+
+chain = DegradationChain(breaker_manager=breaker_mgr)
+
+# Get next available fallback
+fallback = chain.get_fallback("deepseek_v4_pro", task_type="heavy")
+# → "glm_5"
+
+# Get full chain
+full_chain = chain.get_full_chain("heavy")
+# → ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+
+# Add custom chain
+chain.add_chain("light", ["deepseek_v4_flash", "glm_5"])
+```
+
+**Default chains:**
+- `"heavy"`: V4-Pro → GLM-5 → V4-Flash
+- `"multimodal"`: M3 → V4-Pro (degrades to text-only)
+- `"default"`: V4-Pro → GLM-5 → V4-Flash
+
+### LongHorizonRecoveryManager
+
+```python
+from teragent.reliability.recovery import LongHorizonRecoveryManager
+from teragent.long_horizon.checkpoint import CheckpointStore
+
+store = CheckpointStore()
+recovery_mgr = LongHorizonRecoveryManager(checkpoint_store=store)
+
+# Recover from latest checkpoint
+success = await recovery_mgr.recover_from_checkpoint(task_manager)
+
+# Check if should downgrade to standard mode
+if recovery_mgr.should_downgrade_to_standard(recovery_attempts=3, elapsed_time=1800):
+    print("Switching to standard mode")
+
+# Get reconnection delay (exponential backoff with jitter)
+delay = recovery_mgr.get_reconnection_delay(attempt=2)
+```
+
+### RateLimitHandler & RateLimitInfo
+
+```python
+from teragent.reliability.recovery import RateLimitHandler, RateLimitInfo
+
+handler = RateLimitHandler(breaker_manager=breaker_mgr)
+
+# Parse rate limit response (normalizes different provider formats)
+info = handler.parse_rate_limit_response(
+    model_name="deepseek_v4_pro",
+    status_code=429,
+    headers={"Retry-After": "30"},
+    body=None,
+)
+
+# Check if should retry
+if handler.should_retry("deepseek_v4_pro", info):
+    delay = handler.get_backoff_delay("deepseek_v4_pro", attempt=1, rate_limit_info=info)
+```
+
+**RateLimitInfo attributes:**
+- `model_name: str` — Model that returned the rate limit response
+- `requests_remaining: int | None` — Remaining requests in current window
+- `tokens_remaining: int | None` — Remaining tokens in current window
+- `reset_time: float | None` — Unix timestamp when window resets
+- `retry_after: float | None` — Seconds to wait before retrying
+
+---
+
+## MiniMax Adapter (`teragent.core.adapters.minimax_native`)
+
+### MiniMaxNativeAdapter
+
+```python
+from teragent.core.adapters.minimax_native import MiniMaxNativeAdapter
+
+adapter = MiniMaxNativeAdapter(
+    base_url="https://api.minimaxi.com/v1",
+    api_key="your-api-key",
+    group_id="your-group-id",       # Optional: required for some endpoints
+    timeout=300.0,
+    multimodal_timeout=600.0,       # Longer timeout for video processing
+    enable_fake_tools=False,
+)
+```
+
+**MiniMax-specific methods:**
+- `send_desktop_command(command, params, screenshot, interactive_elements, active_window, model) -> dict` — Send desktop command via dedicated endpoint
+  - Returns `{"action": ..., "reasoning": ..., "raw_response": ...}`
+  - Falls back to chat completions if desktop endpoint unavailable (404)
+
+**MiniMax-specific properties:**
+- `billing_summary -> dict` — Cumulative billing tracker (input/output/cache tokens, request count)
+- `rate_limit_info -> MiniMaxRateLimitInfo` — Current rate limit information from headers
+
+**Capabilities:**
+- `multimodal: True`
+- `desktop: True`
+- `video: True`
+- `msa_efficient: True`
+- `max_context_tokens: 1_000_000`
+
+### MiniMaxRateLimitInfo
+
+```python
+from teragent.core.adapters.minimax_native import MiniMaxRateLimitInfo
+
+info = MiniMaxRateLimitInfo()
+# Updated automatically from response headers
+```
+
+**Properties:**
+- `limit: int` — Maximum requests in current window
+- `remaining: int` — Remaining requests
+- `reset: float` — Timestamp when window resets
+- `is_exhausted -> bool` — Whether rate limit is exhausted
+- `reset_in_seconds -> float` — Seconds until window resets
+
+---
+
+## Desktop Tool (`teragent.tools.desktop`)
+
+### DesktopTool
+
+```python
+from teragent.tools.desktop import DesktopTool, DesktopSafetyConfig
+
+safety = DesktopSafetyConfig(
+    safe_zones=[],               # Forbidden click zones (x1, y1, x2, y2)
+    min_interval=0.5,            # Min seconds between operations
+    max_consecutive_ops=50,      # Max consecutive operations
+    screenshot_quality=75,       # JPEG quality (1-100)
+    screenshot_format="jpeg",    # "jpeg" or "png"
+)
+
+tool = DesktopTool(safety_config=safety)
+```
+
+**Supported actions (7 total):**
+
+| Action | Description | Required Parameters |
+|--------|-------------|---------------------|
+| `screenshot` | Capture screen screenshot | None |
+| `click` | Click at coordinates | `x`, `y`, `button` (optional) |
+| `type_text` | Type text string | `text` |
+| `scroll` | Scroll in direction | `direction`, `scroll_amount` |
+| `hotkey` | Press keyboard shortcut | `keys` (comma-separated, e.g., `"ctrl,c"`) |
+| `move_mouse` | Move mouse to coordinates | `x`, `y` |
+| `drag` | Drag from start to end | `x`, `y`, `end_x`, `end_y` |
+
+**Safety features (5 layers):**
+1. Permission level — All operations require DESTRUCTIVE-level confirmation
+2. Safe zones — Configurable forbidden click areas
+3. Rate limiting — Minimum interval between operations
+4. Consecutive ops cap — Max consecutive operations before forced pause
+5. Blocked shortcuts — Dangerous key combinations (Alt+F4, Ctrl+Alt+Del, etc.) are blocked
+
+**Properties:**
+- `simulation_mode -> bool` — Whether in simulation mode (pyautogui unavailable)
+- `safety_config -> DesktopSafetyConfig` — Current safety configuration
+
+**Example:**
+
+```python
+result = await tool.execute({
+    "action": "screenshot",
+})
+# Returns ToolResult with base64-encoded screenshot in data
+
+result = await tool.execute({
+    "action": "click",
+    "x": 100,
+    "y": 200,
+    "button": "left",
+})
+```
+
+---
 
 ## Event Bus (`teragent.event_bus`)
 

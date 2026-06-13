@@ -17,6 +17,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from teragent.core.types import Message
+    from teragent.context.profiles import ContextProfile
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ContextWindow:
         reserved_for_system: int = 2_048,
         warn_threshold: float = 0.75,
         compact_threshold: float = 0.85,
+        profile: Optional["ContextProfile"] = None,
     ) -> None:
         self.model_token_limit = model_token_limit
         self.reserved_for_output = reserved_for_output
@@ -52,14 +54,20 @@ class ContextWindow:
         self.warn_threshold = warn_threshold
         self.compact_threshold = compact_threshold
 
+        # P2-2: 上下文分区配置
+        # 当提供 profile 时，使用其 max_tokens 和分区比例
+        self.profile = profile
+
         # 可用 Token 预算 = 模型上限 - 输出预留 - 系统预留
+        # 当提供 profile 时，使用 profile.max_tokens 作为上限
+        effective_limit = profile.max_tokens if profile else model_token_limit
         self.available_budget = (
-            model_token_limit - reserved_for_output - reserved_for_system
+            effective_limit - reserved_for_output - reserved_for_system
         )
         if self.available_budget <= 0:
             logger.warning(
                 f"Available budget is {self.available_budget} "
-                f"(limit={model_token_limit}, output={reserved_for_output}, "
+                f"(limit={effective_limit}, output={reserved_for_output}, "
                 f"system={reserved_for_system}), clamping to 1"
             )
             self.available_budget = max(self.available_budget, 1)
@@ -155,11 +163,66 @@ class ContextWindow:
         """最近一次估算的 Token 数"""
         return self._last_estimated_tokens
 
+    # ===== P2-2: ContextProfile 集成方法 =====
+
+    def section_budget(self, section: str) -> int:
+        """返回指定区域的 token 预算
+
+        当提供了 ContextProfile 时，使用其分区比例计算预算。
+        否则使用传统的固定预留值计算。
+
+        Args:
+            section: 区域名称，支持 "system", "history", "large_file", "tail_reinforcement"
+
+        Returns:
+            该区域的 token 预算（tokens 数量）
+
+        Raises:
+            ValueError: 不支持的区域名称
+        """
+        if self.profile is not None:
+            return self.profile.section_budget(section)
+
+        # 回退：无 profile 时使用传统计算
+        section_defaults = {
+            "system": self.reserved_for_system,
+            "history": self.available_budget,
+            "large_file": 0,  # 无 profile 时不预留大文件区域
+            "tail_reinforcement": 0,  # 无 profile 时不预留尾部强化区域
+        }
+        if section not in section_defaults:
+            raise ValueError(
+                f"Unknown section: {section!r}. "
+                f"Available: {list(section_defaults.keys())}"
+            )
+        return section_defaults[section]
+
+    def should_compact_section(self, section: str, messages: list) -> bool:
+        """检查指定区域是否超出预算需要压缩
+
+        当提供了 ContextProfile 时，使用分区预算判断。
+        否则回退到传统的 compact_threshold 判断。
+
+        Args:
+            section: 区域名称，支持 "system", "history", "large_file", "tail_reinforcement"
+            messages: 该区域的消息列表
+
+        Returns:
+            True 表示该区域超出预算需要压缩
+        """
+        budget = self.section_budget(section)
+        if budget <= 0:
+            # 预算为 0 的区域（如无 profile 时的 large_file），不需要压缩
+            return False
+
+        estimated = self.estimate_tokens(messages)
+        return estimated >= budget
+
     def summary(self, messages: list) -> dict:
         """返回上下文使用情况摘要（供 TUI /status 使用）"""
         estimated = self.estimate_tokens(messages)
         ratio = self._last_usage_ratio
-        return {
+        result = {
             "estimated_tokens": estimated,
             "available_budget": self.available_budget,
             "model_token_limit": self.model_token_limit,
@@ -169,6 +232,19 @@ class ContextWindow:
             "should_compact": ratio >= self.compact_threshold,
             "message_count": len(messages),
         }
+
+        # P2-2: 如果提供了 profile，附加分区预算信息
+        if self.profile is not None:
+            result["profile"] = {
+                "name": type(self.profile).__name__,
+                "max_tokens": self.profile.max_tokens,
+                "system_budget": self.profile.system_budget,
+                "history_budget": self.profile.history_budget,
+                "large_file_budget": self.profile.large_file_budget,
+                "tail_reinforcement_budget": self.profile.tail_reinforcement_budget,
+            }
+
+        return result
 
     # ===== Phase 7.3: Message 兼容辅助方法 =====
 

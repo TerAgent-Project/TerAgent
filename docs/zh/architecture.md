@@ -102,7 +102,7 @@ TerAgent 的可靠性系统默认为 **建议性而非阻塞性**：
 ### 简单 TAP 调用（execute_tap）
 
 ```python
-provider = create_provider(compiler="glm", adapter="openai_compatible", ...)
+provider = create_provider(compiler="glm_5", adapter="openai_compatible", ...)
 response = await provider.execute_tap(TAPRequest(instruction="..."))
 ```
 

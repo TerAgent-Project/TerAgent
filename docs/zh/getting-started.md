@@ -35,9 +35,9 @@ import teragent
 
 # 方式 1：工厂函数（推荐）
 provider = teragent.create_provider(
-    compiler="glm",
+    compiler="glm_5",
     adapter="openai_compatible",
-    model="glm-5.1",
+    model="glm-5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
 )
@@ -45,17 +45,17 @@ provider = teragent.create_provider(
 # 方式 2：从配置文件创建
 full_config = teragent.load_full_config()
 drivers = full_config["drivers"]
-provider = teragent.create_provider_from_config(drivers["openai_compatible.glm"])
+provider = teragent.create_provider_from_config(drivers["openai_compatible.glm_5"])
 
 # 方式 3：从 DriverConfig 对象创建
 from teragent.config import DriverConfig
 driver_cfg = DriverConfig(
     adapter="openai_compatible",
-    identity="glm",
+    identity="glm_5",
     base_url="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="GLM_API_KEY",
-    model="glm-5.1",
-    compiler="glm",
+    model="glm-5",
+    compiler="glm_5",
 )
 provider = teragent.create_provider(**driver_cfg.to_create_provider_kwargs())
 ```
@@ -141,6 +141,11 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 | `glm` | 近因效应（关键指令置末） | GLM 系列（智谱 AI） |
 | `anthropic` | XML 标签结构化 + Mode B | Claude 系列 |
 | `deepseek` | 极简编译 | DeepSeek 模型 |
+| `deepseek_v4` | 缓存感知布局 + 思考模式 + 1M 上下文优化 | DeepSeek V4-Flash/Pro |
+| `deepseek_v4_flash` | 极简提示词，快速响应 | DeepSeek V4-Flash |
+| `deepseek_v4_pro` | 完整提示词 + 深度推理 | DeepSeek V4-Pro |
+| `glm_5` | 近因效应 + 长时任务 + 自我评估 | GLM-5 |
+| `minimax_m3` | MSA 全文注入 + 多模态 | MiniMax M3 |
 
 ### Adapters
 
@@ -148,6 +153,7 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 |---------|------|------|
 | `openai_compatible` | OpenAI `/chat/completions` + SSE | 适用于 GLM、DeepSeek、OpenRouter 等 |
 | `anthropic_native` | Anthropic `/messages` + Anthropic SSE | 直连 Anthropic API |
+| `minimax_native` | MiniMax 原生 API + 速率限制追踪 | MiniMax M3 多模态/桌面自动化 |
 | `mock` | 无 HTTP 调用 | 用于测试 |
 
 ### Valid Combinations
@@ -156,9 +162,15 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 |----------|---------|------|---------|
 | `default` | `openai_compatible` | 通用 OpenAI 协议模型 | 标准聊天消息 |
 | `glm` | `openai_compatible` | GLM 系列（智谱 AI） | 近因效应优化 |
+| `glm_5` | `openai_compatible` | GLM-5（长时任务） | 深度推理 + 长时任务支持 |
 | `anthropic` | `openai_compatible` | 通过 OpenRouter 的 Claude | XML 标签 + 近因效应 |
 | `anthropic` | `anthropic_native` | 通过 Anthropic API 的 Claude | XML 标签 + system/user 分离 (Mode B) |
-| `deepseek` | `openai_compatible` | DeepSeek 模型 | 极简编译 |
+| `deepseek` | `openai_compatible` | DeepSeek V3 模型 | 极简编译 |
+| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | 缓存感知布局 + 思考模式 |
+| `deepseek_v4_flash` | `openai_compatible` | DeepSeek V4-Flash | 极简提示词，快速响应 |
+| `deepseek_v4_pro` | `openai_compatible` | DeepSeek V4-Pro | 完整提示词 + 深度推理 |
+| `minimax_m3` | `openai_compatible` | MiniMax M3（文本） | MSA 全文注入 |
+| `minimax_m3` | `minimax_native` | MiniMax M3（多模态/桌面） | 原生多模态 + 速率限制追踪 |
 | `default` | `mock` | 测试 | 无 HTTP 调用 |
 
 ## 下一步

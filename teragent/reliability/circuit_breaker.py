@@ -1173,3 +1173,447 @@ class CircuitBreakerManager:
     def progress_detector(self) -> ProgressDetector:
         """Access the underlying ProgressDetector."""
         return self._progress_detector
+
+
+# ===== Per-Model Circuit Breaker (P4-3) =====
+
+
+@dataclass
+class ModelBreakerConfig:
+    """Per-model circuit breaker configuration.
+
+    Each model (V4-Flash, V4-Pro, M3, GLM-5) can have its own breaker
+    parameters tuned to the model's reliability characteristics.
+
+    Attributes:
+        model_name: Identifier for the model (e.g., "deepseek_v4_pro", "minimax_m3", "glm_5")
+        max_consecutive_failures: Number of consecutive failures before opening the breaker
+        window_seconds: Time window in seconds for failure-rate calculation
+        cooldown_seconds: Seconds to wait before transitioning from open to half_open
+        failure_threshold_percent: Open circuit if failure rate exceeds this fraction in window
+        half_open_max_calls: Number of test calls allowed in half_open state
+    """
+
+    model_name: str  # e.g., "deepseek_v4_pro", "minimax_m3", "glm_5"
+    max_consecutive_failures: int = 5
+    window_seconds: float = 300.0
+    cooldown_seconds: float = 60.0
+    failure_threshold_percent: float = 0.5  # Open circuit if >50% failures in window
+    half_open_max_calls: int = 3  # Allow 3 test calls in half-open state
+
+
+@dataclass
+class ModelBreakerState:
+    """Runtime state for a model's circuit breaker.
+
+    Attributes:
+        model_name: Identifier for the model
+        state: Current breaker state — "closed", "open", or "half_open"
+        failure_count: Number of consecutive failures
+        success_count: Number of consecutive successes (in half_open)
+        last_failure_time: Timestamp of the most recent failure
+        last_state_change: Timestamp of the most recent state transition
+        window_failures: List of (timestamp, error_msg) tuples within the sliding window
+        window_total_calls: Total calls (successes + failures) within the sliding window
+    """
+
+    model_name: str
+    state: str  # "closed", "open", "half_open"
+    failure_count: int = 0
+    success_count: int = 0
+    last_failure_time: float = 0.0
+    last_state_change: float = 0.0
+    window_failures: list[tuple[float, str]] = field(default_factory=list)  # (timestamp, error_msg) tuples
+    window_total_calls: int = 0  # total calls in the sliding window
+
+
+# Default degradation chain for the three-model architecture
+_DEFAULT_DEGRADATION_CHAIN: list[list[str]] = [
+    ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"],
+    ["minimax_m3", "deepseek_v4_pro"],
+]
+
+
+class ModelCircuitBreakerManager:
+    """Manages per-model circuit breakers with cross-model degradation support.
+
+    Each model (V4-Flash, V4-Pro, M3, GLM-5) has its own circuit breaker.
+    When a model's breaker opens, the degradation chain is consulted for fallback.
+
+    Usage::
+
+        manager = ModelCircuitBreakerManager()
+        fallback = manager.record_failure("deepseek_v4_pro", "API timeout")
+        if fallback:
+            print(f"Breaker opened! Falling back to {fallback}")
+
+        if manager.can_call("deepseek_v4_pro"):
+            # Safe to call the model
+            ...
+
+        # Check all model states
+        states = manager.get_all_states()
+    """
+
+    def __init__(
+        self,
+        configs: list[ModelBreakerConfig] | None = None,
+        degradation_chain: list[list[str]] | None = None,
+    ) -> None:
+        """Initialize ModelCircuitBreakerManager.
+
+        Args:
+            configs: Per-model breaker configurations. If None, default configs
+                are created for the standard three-model architecture.
+            degradation_chain: Ordered fallback chains. Each inner list is a
+                priority-ordered sequence of model names. If None, the default
+                degradation chain is used.
+        """
+        now = time.time()
+
+        # Build per-model configs
+        if configs:
+            self._configs: dict[str, ModelBreakerConfig] = {
+                c.model_name: c for c in configs
+            }
+        else:
+            # Default configs for the three-model architecture
+            default_models = [
+                "deepseek_v4_pro",
+                "deepseek_v4_flash",
+                "minimax_m3",
+                "glm_5",
+            ]
+            self._configs = {
+                name: ModelBreakerConfig(model_name=name) for name in default_models
+            }
+
+        # Initialize per-model states
+        self._states: dict[str, ModelBreakerState] = {
+            name: ModelBreakerState(
+                model_name=name,
+                state="closed",
+                last_state_change=now,
+            )
+            for name in self._configs
+        }
+
+        # Degradation chain: maps model_name → ordered fallback list
+        self._degradation_chain: list[list[str]] = (
+            degradation_chain if degradation_chain is not None
+            else _DEFAULT_DEGRADATION_CHAIN
+        )
+
+        # Half-open call tracking
+        self._half_open_calls: dict[str, int] = {}
+
+    # ----- Core methods -----
+
+    def record_success(self, model_name: str) -> None:
+        """Record a successful call for a model.
+
+        In closed state: resets consecutive failure count and records in window.
+        In half_open state: increments success count; closes breaker if
+        enough successful test calls have been made.
+
+        Args:
+            model_name: The model that succeeded
+        """
+        state = self._get_or_create_state(model_name)
+        config = self._get_or_create_config(model_name)
+
+        # Record in the sliding window (success doesn't have an error message)
+        if model_name in self._states:
+            state.window_total_calls += 1
+            self._prune_window(model_name)
+
+        if state.state == "half_open":
+            state.success_count += 1
+            if state.success_count >= config.half_open_max_calls:
+                self._transition(model_name, "closed")
+                logger.info(
+                    f"Model circuit breaker CLOSED for {model_name} "
+                    f"after {state.success_count} successful test calls"
+                )
+        elif state.state == "closed":
+            state.failure_count = 0
+
+        logger.debug(
+            f"Model breaker success recorded for {model_name}: "
+            f"state={state.state}, failure_count={state.failure_count}"
+        )
+
+    def record_failure(self, model_name: str, error: str = "") -> str | None:
+        """Record a failure for a model.
+
+        Returns the fallback model name if the breaker just opened,
+        or None if the breaker was already open or remains closed.
+
+        Args:
+            model_name: The model that failed
+            error: Error message describing the failure
+
+        Returns:
+            Fallback model name if breaker just opened, None otherwise
+        """
+        state = self._get_or_create_state(model_name)
+        config = self._get_or_create_config(model_name)
+        now = time.time()
+
+        # Record the failure in the sliding window
+        state.window_failures.append((now, error))
+        state.window_total_calls += 1
+        self._prune_window(model_name)
+
+        if state.state == "half_open":
+            # Any failure in half_open reopens the breaker
+            self._transition(model_name, "open")
+            fallback = self.get_fallback(model_name)
+            logger.warning(
+                f"Model circuit breaker re-OPENED for {model_name} "
+                f"after failure in half_open: {error}"
+            )
+            return fallback
+
+        if state.state == "closed":
+            state.failure_count += 1
+            state.last_failure_time = now
+
+            # Check consecutive failure threshold
+            if state.failure_count >= config.max_consecutive_failures:
+                self._transition(model_name, "open")
+                fallback = self.get_fallback(model_name)
+                logger.warning(
+                    f"Model circuit breaker OPENED for {model_name} "
+                    f"after {state.failure_count} consecutive failures"
+                )
+                return fallback
+
+            # Check failure rate threshold in the sliding window
+            # Only check when we have enough total calls for a meaningful rate
+            if state.window_total_calls >= 10:
+                window_failure_rate = self._get_failure_rate(model_name)
+                if window_failure_rate > config.failure_threshold_percent:
+                    self._transition(model_name, "open")
+                    fallback = self.get_fallback(model_name)
+                    logger.warning(
+                        f"Model circuit breaker OPENED for {model_name} "
+                        f"due to failure rate {window_failure_rate:.1%} "
+                        f"in last {config.window_seconds:.0f}s "
+                        f"({len(state.window_failures)}/{state.window_total_calls} calls)"
+                    )
+                    return fallback
+
+        # state is "open" — already open, no new fallback needed
+        return None
+
+    def get_state(self, model_name: str) -> str:
+        """Get the current breaker state for a model.
+
+        Also handles automatic transition from "open" to "half_open"
+        if the cooldown period has elapsed.
+
+        Args:
+            model_name: The model to check
+
+        Returns:
+            "closed", "open", or "half_open"
+        """
+        state = self._get_or_create_state(model_name)
+        config = self._get_or_create_config(model_name)
+
+        # Auto-transition from open to half_open after cooldown
+        if state.state == "open":
+            elapsed = time.time() - state.last_state_change
+            if elapsed >= config.cooldown_seconds:
+                self._transition(model_name, "half_open")
+                logger.info(
+                    f"Model circuit breaker HALF_OPEN for {model_name} "
+                    f"after {elapsed:.1f}s cooldown"
+                )
+
+        return self._states[model_name].state
+
+    def can_call(self, model_name: str) -> bool:
+        """Check if a call can be made to the specified model.
+
+        Args:
+            model_name: The model to check
+
+        Returns:
+            True if the model is callable (closed or half_open with remaining
+            test calls), False if the breaker is open
+        """
+        current_state = self.get_state(model_name)
+
+        if current_state == "closed":
+            return True
+        elif current_state == "half_open":
+            config = self._get_or_create_config(model_name)
+            calls_made = self._half_open_calls.get(model_name, 0)
+            return calls_made < config.half_open_max_calls
+        else:  # open
+            return False
+
+    def get_fallback(self, model_name: str) -> str | None:
+        """Get the best available fallback model for the given model.
+
+        Consults the degradation chain and skips models whose breakers
+        are also open.
+
+        Args:
+            model_name: The model that needs a fallback
+
+        Returns:
+            Name of the first available fallback model, or None if
+            all fallbacks are unavailable
+        """
+        for chain in self._degradation_chain:
+            if model_name not in chain:
+                continue
+            idx = chain.index(model_name)
+            for candidate in chain[idx + 1:]:
+                if self.get_state(candidate) != "open":
+                    return candidate
+        return None
+
+    def get_all_states(self) -> dict[str, str]:
+        """Get the breaker state for all known models.
+
+        Returns:
+            Dict mapping model_name → state string
+        """
+        return {name: self.get_state(name) for name in self._states}
+
+    def reset(self, model_name: str | None = None) -> None:
+        """Reset breaker state.
+
+        Args:
+            model_name: Specific model to reset, or None to reset all
+        """
+        now = time.time()
+        if model_name is None:
+            for name in self._states:
+                self._states[name].state = "closed"
+                self._states[name].failure_count = 0
+                self._states[name].success_count = 0
+                self._states[name].last_failure_time = 0.0
+                self._states[name].last_state_change = now
+                self._states[name].window_failures.clear()
+                self._half_open_calls.pop(name, None)
+        elif model_name in self._states:
+            state = self._states[model_name]
+            state.state = "closed"
+            state.failure_count = 0
+            state.success_count = 0
+            state.last_failure_time = 0.0
+            state.last_state_change = now
+            state.window_failures.clear()
+            self._half_open_calls.pop(model_name, None)
+
+    # ----- Internal helpers -----
+
+    def _transition(self, model_name: str, new_state: str) -> None:
+        """Transition a model's breaker to a new state.
+
+        Args:
+            model_name: The model whose breaker state is changing
+            new_state: The new state ("closed", "open", "half_open")
+        """
+        state = self._states[model_name]
+        old_state = state.state
+        state.state = new_state
+        state.last_state_change = time.time()
+
+        if new_state == "half_open":
+            state.success_count = 0
+            state.failure_count = 0
+            self._half_open_calls[model_name] = 0
+        elif new_state == "closed":
+            state.success_count = 0
+            state.failure_count = 0
+            self._half_open_calls.pop(model_name, None)
+        elif new_state == "open":
+            self._half_open_calls.pop(model_name, None)
+
+        logger.debug(
+            f"Model breaker transition: {model_name} {old_state} → {new_state}"
+        )
+
+    def _prune_window(self, model_name: str) -> None:
+        """Remove failures outside the sliding window and recalculate total calls.
+
+        The window_total_calls counter is approximate — it is incremented on
+        every call and only fully recalculated here. For most workloads this
+        is sufficient because prune is called on every call and stale entries
+        are removed regularly.
+
+        Args:
+            model_name: The model whose window to prune
+        """
+        state = self._states[model_name]
+        config = self._configs[model_name]
+        cutoff = time.time() - config.window_seconds
+        old_failure_count = len(state.window_failures)
+        state.window_failures = [
+            (ts, msg) for ts, msg in state.window_failures if ts > cutoff
+        ]
+        # Adjust window_total_calls by the number of pruned failures.
+        # Note: successes that fell outside the window can't be precisely
+        # tracked, so window_total_calls may slightly overcount. This is
+        # acceptable for rate-limiting purposes.
+        pruned = old_failure_count - len(state.window_failures)
+        if pruned > 0:
+            state.window_total_calls = max(
+                len(state.window_failures),
+                state.window_total_calls - pruned,
+            )
+
+    def _get_failure_rate(self, model_name: str) -> float:
+        """Calculate the failure rate within the sliding window.
+
+        Uses window_total_calls as the denominator and window_failures
+        count as the numerator.
+
+        Args:
+            model_name: The model to calculate rate for
+
+        Returns:
+            Failure rate as a float between 0.0 and 1.0
+        """
+        state = self._states[model_name]
+        if state.window_total_calls == 0:
+            return 0.0
+        return len(state.window_failures) / state.window_total_calls
+
+    def _get_or_create_state(self, model_name: str) -> ModelBreakerState:
+        """Get existing state or create default state for a model.
+
+        Args:
+            model_name: The model name
+
+        Returns:
+            ModelBreakerState for the model
+        """
+        if model_name not in self._states:
+            now = time.time()
+            self._states[model_name] = ModelBreakerState(
+                model_name=model_name,
+                state="closed",
+                last_state_change=now,
+                window_total_calls=0,
+            )
+        return self._states[model_name]
+
+    def _get_or_create_config(self, model_name: str) -> ModelBreakerConfig:
+        """Get existing config or create default config for a model.
+
+        Args:
+            model_name: The model name
+
+        Returns:
+            ModelBreakerConfig for the model
+        """
+        if model_name not in self._configs:
+            self._configs[model_name] = ModelBreakerConfig(model_name=model_name)
+        return self._configs[model_name]

@@ -66,11 +66,6 @@ def event_bus():
     bus.clear()
 
 
-# ===== Plan fixture =====
-
-# Plan fixtures removed — Plan/DAGScheduler not migrated to teragent
-
-
 # ===== Permission fixture =====
 
 @pytest.fixture

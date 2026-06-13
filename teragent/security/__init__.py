@@ -19,6 +19,7 @@ from teragent.security.file_state import FileStateTracker
 from teragent.security.file_writer import atomic_write_file, write_files_safely
 from teragent.security.ai_permission_classifier import AIPermissionClassifier
 from teragent.security.sandbox import execute_in_sandbox, check_command_safety
+from teragent.security.firecracker_sandbox import FirecrackerSandbox
 from teragent.security.audit import AuditLogger
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "write_files_safely",
     "execute_in_sandbox",
     "check_command_safety",
+    "FirecrackerSandbox",
     "AuditLogger",
 ]

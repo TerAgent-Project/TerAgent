@@ -4,11 +4,11 @@ Supports two config formats in agent.toml:
 
 ## New format (protocol.identity two-level structure):
 
-    [drivers.openai_compatible.glm]
+    [drivers.openai_compatible.glm_5]
     base_url = "https://open.bigmodel.cn/api/paas/v4"
     api_key_env = "GLM_API_KEY"
-    model = "glm-5.1"
-    compiler = "glm"
+    model = "glm-5"
+    compiler = "glm_5"
 
     [drivers.anthropic_native.claude]
     base_url = "https://api.anthropic.com/v1"
@@ -35,10 +35,10 @@ For old format, compiler is auto-inferred from the identity/adapter name.
 ## Pipeline config:
 
     [execution.pipeline]
-    design_driver = "openai_compatible.glm"
-    plan_driver = "openai_compatible.glm"
-    execute_driver = "openai_compatible.glm"
-    review_driver = "openai_compatible.glm"
+    design_driver = "openai_compatible.glm_5"
+    plan_driver = "openai_compatible.glm_5"
+    execute_driver = "openai_compatible.glm_5"
+    review_driver = "openai_compatible.glm_5"
 
 Old format also supported:
 
@@ -133,6 +133,12 @@ _COMPILER_INFERENCE_MAP: dict[str, str] = {
     "claude": "anthropic",
     "anthropic": "anthropic",
     "deepseek": "deepseek",
+    "deepseek_v4": "deepseek_v4",
+    "deepseek_v4_flash": "deepseek_v4",
+    "deepseek_v4_pro": "deepseek_v4",
+    "minimax": "minimax_m3",
+    "minimax_m3": "minimax_m3",
+    "glm_5": "glm_5",
     "step": "default",
     "gpt": "default",
     "qwen": "default",
@@ -142,6 +148,8 @@ _COMPILER_INFERENCE_MAP: dict[str, str] = {
 _OLD_DRIVER_NAME_MAP: dict[str, tuple[str, str]] = {
     "openai_compatible": ("openai_compatible", "default"),
     "anthropic_compatible": ("anthropic_native", "claude"),
+    "minimax_native": ("minimax_native", "minimax"),
+    "minimax": ("minimax_native", "minimax"),
     "glm": ("openai_compatible", "glm"),
     "mock": ("mock", "mock"),
 }
@@ -226,7 +234,7 @@ def load_driver_configs(config: dict[str, Any]) -> dict[str, DriverConfig]:
         config: The full TOML config dict (from tomllib.load or similar)
 
     Returns:
-        Dict mapping full_name (e.g., "openai_compatible.glm") to DriverConfig instances.
+        Dict mapping full_name (e.g., "openai_compatible.glm_5") to DriverConfig instances.
         For old format, the full_name may be just the adapter name (e.g., "openai_compatible").
     """
     drivers_section = config.get("drivers", {})
@@ -243,11 +251,11 @@ def _load_new_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]
     """Load drivers using new protocol.identity two-level format.
 
     Example TOML:
-        [drivers.openai_compatible.glm]
+        [drivers.openai_compatible.glm_5]
         base_url = "https://open.bigmodel.cn/api/paas/v4"
         api_key_env = "GLM_API_KEY"
-        model = "glm-5.1"
-        compiler = "glm"
+        model = "glm-5"
+        compiler = "glm_5"
     """
     drivers: dict[str, DriverConfig] = {}
 
@@ -278,6 +286,16 @@ def _load_new_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]
                 full_name=full_name,
                 api_key_env=api_key_env,
                 enable_fake_tools=settings.get("enable_fake_tools", False),
+                # Extended fields for V4/M3/GLM-5
+                compiler_variant=settings.get("compiler_variant", ""),
+                max_context_tokens=int(settings.get("max_context_tokens", 0)),
+                max_output_tokens=int(settings.get("max_output_tokens", 0)),
+                thinking_mode=settings.get("thinking_mode", ""),
+                cache_aware=settings.get("cache_aware", False),
+                multimodal_enabled=settings.get("multimodal_enabled", False),
+                desktop_enabled=settings.get("desktop_enabled", False),
+                long_horizon_enabled=settings.get("long_horizon_enabled", False),
+                msa_efficient=settings.get("msa_efficient", False),
             )
 
             logger.info(
@@ -332,6 +350,16 @@ def _load_old_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]
             full_name=full_name,
             api_key_env=api_key_env,
             enable_fake_tools=settings.get("enable_fake_tools", False),
+            # Extended fields for V4/M3/GLM-5
+            compiler_variant=settings.get("compiler_variant", ""),
+            max_context_tokens=int(settings.get("max_context_tokens", 0)),
+            max_output_tokens=int(settings.get("max_output_tokens", 0)),
+            thinking_mode=settings.get("thinking_mode", ""),
+            cache_aware=settings.get("cache_aware", False),
+            multimodal_enabled=settings.get("multimodal_enabled", False),
+            desktop_enabled=settings.get("desktop_enabled", False),
+            long_horizon_enabled=settings.get("long_horizon_enabled", False),
+            msa_efficient=settings.get("msa_efficient", False),
         )
 
         logger.info(
@@ -353,10 +381,10 @@ def load_pipeline_config(config: dict[str, Any]) -> dict[str, str]:
 
     New format:
         [execution.pipeline]
-        design_driver = "openai_compatible.glm"
-        plan_driver = "openai_compatible.glm"
-        execute_driver = "openai_compatible.glm"
-        review_driver = "openai_compatible.glm"
+        design_driver = "openai_compatible.glm_5"
+        plan_driver = "openai_compatible.glm_5"
+        execute_driver = "openai_compatible.glm_5"
+        review_driver = "openai_compatible.glm_5"
 
     Old format:
         [execution.pipeline]
@@ -367,7 +395,7 @@ def load_pipeline_config(config: dict[str, Any]) -> dict[str, str]:
 
     Returns:
         Dict with keys: "design", "plan", "execute", "review"
-        Values are driver full_names (e.g., "openai_compatible.glm")
+        Values are driver full_names (e.g., "openai_compatible.glm_5")
     """
     pipeline = config.get("execution", {}).get("pipeline", {})
 
@@ -507,7 +535,7 @@ def get_driver_config(
 ) -> DriverConfig | None:
     """Look up a DriverConfig by name.
 
-    Supports both full names ("openai_compatible.glm") and short names ("glm").
+    Supports both full names ("openai_compatible.glm_5") and short names ("glm_5").
 
     Args:
         drivers: Dict of full_name → DriverConfig
@@ -542,6 +570,12 @@ def load_typed_config(config_path: str | None = None) -> Any:
     This is the Phase 5 main entry point for loading all configuration
     with full type safety. Returns a TerAgentConfig dataclass instead
     of a raw dict.
+
+    NOTE: TerAgentConfig is imported inside this function to avoid a circular
+    import with teragent.config.teragent_config (which imports load_driver_configs
+    from this module at function scope). This is an intentional pattern — both
+    sides use function-scoped imports to break the cycle. Do NOT hoist this
+    import to module level.
 
     Args:
         config_path: Path to agent.toml. If None, searches default locations.

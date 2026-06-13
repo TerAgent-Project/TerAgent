@@ -13,6 +13,7 @@ from teragent.tools.base import BaseTool, ToolResult
 from teragent.core.types import ToolSafety
 from teragent.tools.registry import ToolRegistry
 from teragent.tools.orchestrator import ToolOrchestrator, MAX_CONCURRENT_TOOLS
+from teragent.tools.desktop import DesktopTool, DesktopSafetyConfig
 
 __all__ = [
     "BaseTool",
@@ -21,4 +22,6 @@ __all__ = [
     "ToolRegistry",
     "ToolOrchestrator",
     "MAX_CONCURRENT_TOOLS",
+    "DesktopTool",
+    "DesktopSafetyConfig",
 ]

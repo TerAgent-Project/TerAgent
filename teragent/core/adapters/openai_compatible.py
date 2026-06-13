@@ -11,9 +11,11 @@ Features:
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
-from typing import AsyncIterator
+import re
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -104,6 +106,82 @@ def detect_fake_tool_call(response_data: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Multimodal validation helpers
+# ---------------------------------------------------------------------------
+
+# URL 协议白名单
+_VALID_URL_SCHEMES = {"http", "https", "ftp", "ftps"}
+
+# Data URI MIME 类型白名单（图片相关）
+_VALID_IMAGE_MIME_TYPES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+    "image/bmp", "image/svg+xml", "image/tiff",
+}
+
+
+def _is_valid_url(url: str) -> bool:
+    """检查 URL 格式是否有效
+
+    Args:
+        url: 待检查的 URL
+
+    Returns:
+        URL 格式是否有效
+    """
+    if not url:
+        return False
+    # 简单检查：包含 :// 且协议在白名单中
+    for scheme in _VALID_URL_SCHEMES:
+        if url.startswith(f"{scheme}://"):
+            return True
+    return False
+
+
+def _validate_data_uri(data_uri: str) -> bool:
+    """验证 base64 data URI 格式是否有效
+
+    格式：data:<mime_type>;base64,<base64_data>
+
+    Args:
+        data_uri: data URI 字符串
+
+    Returns:
+        data URI 是否有效
+    """
+    if not data_uri.startswith("data:"):
+        return False
+
+    # 解析 data URI
+    # 格式：data:[<mediatype>][;base64],<data>
+    rest = data_uri[5:]  # 去掉 "data:" 前缀
+
+    if ";base64," not in rest:
+        return False
+
+    mime_part, _, base64_part = rest.partition(";base64,")
+
+    # 检查 MIME 类型
+    if mime_part and mime_part not in _VALID_IMAGE_MIME_TYPES:
+        # 不是已知图片类型，但不一定无效（可能是 image/* 或其他类型）
+        # 仅当明确不是 image/ 开头时报错
+        if not mime_part.startswith("image/"):
+            logger.debug(f"Data URI MIME type not in image whitelist: {mime_part}")
+
+    # 检查 base64 数据是否非空
+    if not base64_part:
+        return False
+
+    # 尝试解码一小部分 base64 数据来验证格式
+    try:
+        # 只解码前 100 字符，避免大图片的性能问题
+        sample = base64_part[:100]
+        base64.b64decode(sample, validate=True)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
 
@@ -127,14 +205,17 @@ class OpenAICompatibleAdapter(TAPAdapter):
         timeout: float = 300.0,
         extra_headers: dict | None = None,
         enable_fake_tools: bool = False,
+        multimodal_timeout: float = 600.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._timeout = timeout
         self._extra_headers: dict[str, str] = extra_headers or {}
         self._enable_fake_tools = enable_fake_tools
+        self._multimodal_timeout = multimodal_timeout
 
         # httpx timeout: short connect/write/pool, long read (streaming chunks)
+        # 视频处理需要更长的超时时间
         self._http_timeout = httpx.Timeout(
             connect=30.0,
             read=self._timeout,
@@ -142,19 +223,29 @@ class OpenAICompatibleAdapter(TAPAdapter):
             pool=30.0,
         )
 
+        # 多模态请求的专用超时配置（视频处理等耗时操作）
+        self._multimodal_http_timeout = httpx.Timeout(
+            connect=60.0,
+            read=self._multimodal_timeout,
+            write=60.0,
+            pool=60.0,
+        )
+
         # Lazy-initialised persistent HTTP client
         self._http_client: httpx.AsyncClient | None = None
+        self._multimodal_http_client: httpx.AsyncClient | None = None
 
         logger.info(
             f"OpenAICompatibleAdapter: base_url={self.base_url}, "
             f"api_key={'***' if self.api_key else '(empty)'}, "
             f"extra_headers={bool(self._extra_headers)}, "
-            f"fake_tools={self._enable_fake_tools}, timeout={self._timeout}s"
+            f"fake_tools={self._enable_fake_tools}, "
+            f"timeout={self._timeout}s, multimodal_timeout={self._multimodal_timeout}s"
         )
 
     # ----- connection pool management -----
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    async def _get_client(self, multimodal: bool = False) -> httpx.AsyncClient:
         """Get or create a persistent httpx connection pool client.
 
         Connection pool configuration:
@@ -162,7 +253,27 @@ class OpenAICompatibleAdapter(TAPAdapter):
           - max_keepalive_connections=5
           - keepalive_expiry=60s
           - HTTP/2 enabled
+
+        Args:
+            multimodal: 是否使用多模态专用超时配置（更长的超时时间用于视频处理）
         """
+        if multimodal:
+            if self._multimodal_http_client is None or self._multimodal_http_client.is_closed:
+                self._multimodal_http_client = httpx.AsyncClient(
+                    timeout=self._multimodal_http_timeout,
+                    limits=httpx.Limits(
+                        max_connections=5,
+                        max_keepalive_connections=2,
+                        keepalive_expiry=120.0,
+                    ),
+                    http2=True,
+                )
+                logger.debug(
+                    f"{self.__class__.__name__}: created new multimodal httpx connection pool "
+                    f"(timeout={self._multimodal_timeout}s, max_connections=5, http2=True)"
+                )
+            return self._multimodal_http_client
+
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=self._http_timeout,
@@ -180,11 +291,13 @@ class OpenAICompatibleAdapter(TAPAdapter):
         return self._http_client
 
     async def close(self) -> None:
-        """Close the httpx connection pool."""
-        if self._http_client is not None and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            logger.debug(f"{self.__class__.__name__}: httpx connection pool closed")
-        self._http_client = None
+        """Close the httpx connection pools."""
+        for client_attr in ("_http_client", "_multimodal_http_client"):
+            client = getattr(self, client_attr, None)
+            if client is not None and not client.is_closed:
+                await client.aclose()
+                logger.debug(f"{self.__class__.__name__}: {client_attr} connection pool closed")
+            setattr(self, client_attr, None)
 
     async def __aenter__(self):
         return self
@@ -193,11 +306,13 @@ class OpenAICompatibleAdapter(TAPAdapter):
         await self.close()
 
     def __del__(self) -> None:
-        if self._http_client is not None and not self._http_client.is_closed:
-            logger.warning(
-                f"{self.__class__.__name__}: httpx client not closed. "
-                f"Call 'await adapter.close()' or use 'async with' to avoid resource leaks."
-            )
+        for client_attr in ("_http_client", "_multimodal_http_client"):
+            client = getattr(self, client_attr, None)
+            if client is not None and not client.is_closed:
+                logger.warning(
+                    f"{self.__class__.__name__}: {client_attr} not closed. "
+                    f"Call 'await adapter.close()' or use 'async with' to avoid resource leaks."
+                )
 
     # ----- helper methods -----
 
@@ -223,6 +338,100 @@ class OpenAICompatibleAdapter(TAPAdapter):
             return {}
         return choices[index] or {}
 
+    # ----- Multimodal content validation -----
+
+    @staticmethod
+    def _detect_multimodal_in_messages(messages: list[dict]) -> bool:
+        """检测消息列表中是否包含多模态内容
+
+        检查消息的 content 字段是否为 OpenAI 格式的 content 数组，
+        且包含 image_url、video_url 等多模态类型。
+
+        Args:
+            messages: 消息列表
+
+        Returns:
+            是否包含多模态内容
+        """
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in (
+                        "image_url", "video_url"
+                    ):
+                        return True
+        return False
+
+    @staticmethod
+    def _validate_multimodal_content(messages: list[dict]) -> list[str]:
+        """验证多模态内容的有效性
+
+        在发送前检查所有多模态内容是否有效：
+        - image_url: URL 必须非空且格式合理
+        - image_base64: base64 数据必须有效
+        - video_url: URL 必须非空且格式合理
+
+        Args:
+            messages: 消息列表
+
+        Returns:
+            警告消息列表（空列表表示全部有效）
+        """
+        warnings: list[str] = []
+
+        for msg_idx, msg in enumerate(messages):
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+
+            for part_idx, part in enumerate(content):
+                if not isinstance(part, dict):
+                    continue
+
+                part_type = part.get("type", "")
+
+                # 验证 image_url 内容
+                if part_type == "image_url":
+                    image_url_obj = part.get("image_url", {})
+                    url = image_url_obj.get("url", "")
+
+                    if not url:
+                        warnings.append(
+                            f"消息[{msg_idx}] 内容[{part_idx}]: "
+                            f"image_url 的 URL 为空"
+                        )
+                    elif url.startswith("data:"):
+                        # 验证 base64 data URI
+                        if not _validate_data_uri(url):
+                            warnings.append(
+                                f"消息[{msg_idx}] 内容[{part_idx}]: "
+                                f"image_url 的 base64 data URI 格式无效"
+                            )
+                    elif not _is_valid_url(url):
+                        warnings.append(
+                            f"消息[{msg_idx}] 内容[{part_idx}]: "
+                            f"image_url 的 URL 格式可能无效: {url[:50]}..."
+                        )
+
+                # 验证 video_url 内容
+                elif part_type == "video_url":
+                    video_url_obj = part.get("video_url", {})
+                    url = video_url_obj.get("url", "")
+
+                    if not url:
+                        warnings.append(
+                            f"消息[{msg_idx}] 内容[{part_idx}]: "
+                            f"video_url 的 URL 为空"
+                        )
+                    elif not _is_valid_url(url):
+                        warnings.append(
+                            f"消息[{msg_idx}] 内容[{part_idx}]: "
+                            f"video_url 的 URL 格式可能无效: {url[:50]}..."
+                        )
+
+        return warnings
+
     @staticmethod
     def _categorize_error(exc: Exception) -> str:
         """Categorise an exception into a readable error class."""
@@ -247,11 +456,37 @@ class OpenAICompatibleAdapter(TAPAdapter):
 
     # ----- core send -----
 
+    # ----- Model name mapping -----
+
+    _MODEL_NAME_MAP: dict[str, str] = {
+        # DeepSeek V4: old names → new canonical names
+        "deepseek-chat": "deepseek-v4-flash",
+        "deepseek-reasoner": "deepseek-v4-flash",
+    }
+
+    def _resolve_model_name(self, model: str) -> str:
+        """Resolve model name, applying backward-compatible mappings.
+
+        Maps old DeepSeek model names to V4 equivalents:
+          deepseek-chat → deepseek-v4-flash
+          deepseek-reasoner → deepseek-v4-flash (with thinking mode)
+        """
+        return self._MODEL_NAME_MAP.get(model, model)
+
+    # ----- Core send -----
+
     async def send(self, compiled: CompiledPrompt, model: str) -> TAPResponse:
         """Send a compiled prompt to the OpenAI-compatible API.
 
         Strategy: try streaming first to avoid 504 gateway timeouts;
         auto-fallback to non-streaming on HTTP 400/405/501.
+
+        Extended for DeepSeek V4 / GLM-5 / MiniMax M3:
+          - Passes compiled.extra as extra_body for thinking mode, cache settings
+          - Tracks cache_hit_tokens from response usage
+          - Supports 384K max output tokens
+          - Multimodal content validation before sending
+          - Longer timeout for multimodal requests (video processing)
         """
         url = f"{self.base_url}/chat/completions"
         headers = self._build_headers()
@@ -265,12 +500,31 @@ class OpenAICompatibleAdapter(TAPAdapter):
         else:
             messages = compiled.messages
 
+        # 多模态内容验证：发送前检查所有多模态内容的有效性
+        mm_warnings = self._validate_multimodal_content(messages)
+        for w in mm_warnings:
+            logger.warning(f"OpenAICompatibleAdapter: {w}")
+
+        # 检测是否包含多模态内容，选择对应的超时配置
+        has_multimodal = self._detect_multimodal_in_messages(messages)
+
+        # Resolve model name (backward compatibility)
+        resolved_model = self._resolve_model_name(model)
+
+        # Cap max_tokens at 384K (DeepSeek V4 / M3 output limit)
+        max_tokens = min(compiled.max_tokens, 384_000)
+
         payload: dict = {
-            "model": model,
+            "model": resolved_model,
             "messages": messages,
-            "max_tokens": compiled.max_tokens,
+            "max_tokens": max_tokens,
             "stream": True,
         }
+
+        # Pass compiled.extra as extra_body for model-specific parameters
+        # e.g., thinking mode: {"thinking": {"type": "enabled"}}
+        if compiled.extra:
+            payload.update(compiled.extra)
 
         # Send compiled.tools if present (for tool calling)
         if compiled.tools:
@@ -290,7 +544,8 @@ class OpenAICompatibleAdapter(TAPAdapter):
         # (streaming responses use delta.tool_calls, not message.tool_calls)
         tool_call_accumulators: dict[int, dict] = {}
         try:
-            client = await self._get_client()
+            # 多模态请求使用专用超时配置
+            client = await self._get_client(multimodal=has_multimodal)
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
@@ -347,7 +602,18 @@ class OpenAICompatibleAdapter(TAPAdapter):
                 choice = self._safe_get_choice(last_chunk_data)
                 finish_reason = choice.get("finish_reason", "stop") or "stop"
 
-            return TAPResponse(raw_text=raw_text or "", usage=usage, tool_calls=tool_calls, finish_reason=finish_reason)
+            # Extract cache hit tokens from usage (DeepSeek V4 returns prompt_cache_hit_tokens)
+            cache_hit_tokens = 0
+            if usage:
+                cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0)
+
+            return TAPResponse(
+                raw_text=raw_text or "",
+                usage=usage,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+                cache_hit_tokens=cache_hit_tokens,
+            )
 
         except httpx.HTTPStatusError as e:
             # Streaming not supported — fall back to non-streaming
@@ -384,11 +650,18 @@ class OpenAICompatibleAdapter(TAPAdapter):
         else:
             messages = compiled.messages
 
+        resolved_model = self._resolve_model_name(model)
+        max_tokens = min(compiled.max_tokens, 384_000)
+
         payload: dict = {
-            "model": model,
+            "model": resolved_model,
             "messages": messages,
-            "max_tokens": compiled.max_tokens,
+            "max_tokens": max_tokens,
         }
+
+        # Pass compiled.extra as extra_body for model-specific parameters
+        if compiled.extra:
+            payload.update(compiled.extra)
 
         # Send compiled.tools if present (for tool calling)
         if compiled.tools:
@@ -400,7 +673,9 @@ class OpenAICompatibleAdapter(TAPAdapter):
             payload["tools"] = FAKE_TOOLS
             payload["tool_choice"] = "none"
 
-        client = await self._get_client()
+        # 多模态请求使用专用超时配置
+        has_multimodal = self._detect_multimodal_in_messages(messages)
+        client = await self._get_client(multimodal=has_multimodal)
         response = await client.post(url, json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
@@ -438,7 +713,15 @@ class OpenAICompatibleAdapter(TAPAdapter):
                 content = "\n".join(parts)
 
         usage = data.get("usage", {})
-        return TAPResponse(raw_text=content or "", usage=usage, tool_calls=tool_calls, finish_reason=finish_reason)
+        cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) if usage else 0
+
+        return TAPResponse(
+            raw_text=content or "",
+            usage=usage,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            cache_hit_tokens=cache_hit_tokens,
+        )
 
     # ----- core stream -----
 
@@ -459,12 +742,19 @@ class OpenAICompatibleAdapter(TAPAdapter):
         else:
             messages = compiled.messages
 
+        resolved_model = self._resolve_model_name(model)
+        max_tokens = min(compiled.max_tokens, 384_000)
+
         payload: dict = {
-            "model": model,
+            "model": resolved_model,
             "messages": messages,
-            "max_tokens": compiled.max_tokens,
+            "max_tokens": max_tokens,
             "stream": True,
         }
+
+        # Pass compiled.extra as extra_body for model-specific parameters
+        if compiled.extra:
+            payload.update(compiled.extra)
 
         # Send compiled.tools if present (for tool calling)
         if compiled.tools:
@@ -475,7 +765,9 @@ class OpenAICompatibleAdapter(TAPAdapter):
             payload["tools"] = FAKE_TOOLS
             payload["tool_choice"] = "none"
 
-        client = await self._get_client()
+        # 多模态请求使用专用超时配置
+        has_multimodal = self._detect_multimodal_in_messages(messages)
+        client = await self._get_client(multimodal=has_multimodal)
         async with client.stream(
             "POST", url, json=payload, headers=headers
         ) as response:
@@ -506,7 +798,8 @@ class OpenAICompatibleAdapter(TAPAdapter):
         return {
             "streaming": True,
             "tool_calling": True,  # Only distillation detection via fake tools in non-streaming mode
-            "max_context_tokens": 128000,
+            "max_context_tokens": 1_000_000,  # Supports V4/M3 1M and GLM 200K
+            "multimodal": True,  # 支持多模态内容发送
         }
 
     @property

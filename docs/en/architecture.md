@@ -102,7 +102,7 @@ TerAgent's reliability system defaults to **advisory, not blocking**:
 ### Simple TAP Call (execute_tap)
 
 ```python
-provider = create_provider(compiler="glm", adapter="openai_compatible", ...)
+provider = create_provider(compiler="glm_5", adapter="openai_compatible", ...)
 response = await provider.execute_tap(TAPRequest(instruction="..."))
 ```
 

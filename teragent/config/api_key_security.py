@@ -60,7 +60,7 @@ class SecurityFinding:
     Attributes:
         severity: Finding severity level
         message: Human-readable description
-        location: Where the issue was found (e.g., "drivers.openai_compatible.glm.api_key")
+        location: Where the issue was found (e.g., "drivers.openai_compatible.glm_5.api_key")
         recommendation: How to fix the issue
     """
     severity: SecuritySeverity
@@ -249,7 +249,7 @@ class ApiKeyVault:
         # Resolve from config settings
         resolved = vault.resolve_from_settings(
             settings={"api_key_env": "GLM_API_KEY", "api_key": "..."},
-            full_name="openai_compatible.glm"
+            full_name="openai_compatible.glm_5"
         )
 
         # Validate key strength

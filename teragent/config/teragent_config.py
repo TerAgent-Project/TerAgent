@@ -105,7 +105,7 @@ class TerAgentConfig:
         print(config.max_parallel)
         print(config.circuit_breaker.budget.max_session_tokens)
         print(config.context_management.model_token_limit)
-        print(config.drivers["openai_compatible.glm"].model)
+        print(config.drivers["openai_compatible.glm_5"].model)
     """
 
     # --- Root-level parameters ---
@@ -152,7 +152,7 @@ class TerAgentConfig:
         Returns:
             Typed TerAgentConfig instance
         """
-        from teragent.config.loader import load_driver_configs
+        from teragent.config.loader import load_driver_configs  # noqa: delayed import to avoid circular dep with loader.load_typed_config
 
         # Load driver configs
         drivers = load_driver_configs(raw)
