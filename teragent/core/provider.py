@@ -32,17 +32,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, AsyncIterator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from teragent.core.adapter import TAPAdapter
+from teragent.core.compiler import TAPCompiler
 from teragent.core.tap import (
-    TAPRequest,
-    TAPResponse,
-    TAPCostRecord,
     CompiledPrompt,
     CostTracker,
+    TAPCostRecord,
+    TAPRequest,
+    TAPResponse,
 )
-from teragent.core.compiler import TAPCompiler
-from teragent.core.adapter import TAPAdapter
 
 if TYPE_CHECKING:
     from teragent.pipeline.tracing import TAPTracer

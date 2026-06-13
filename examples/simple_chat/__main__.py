@@ -1,5 +1,6 @@
 """Entry point for `python -m examples.simple_chat`."""
-from . import main
 import asyncio
+
+from . import main
 
 asyncio.run(main())

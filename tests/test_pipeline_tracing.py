@@ -9,21 +9,19 @@
   - TraceStats 统计
   - DataConstitution 数据宪法
 """
-import asyncio
-import json
 import os
 import tempfile
+
 import pytest
 
+from teragent.core.tap import TAPRequest, TAPResponse
 from teragent.pipeline.tracing import (
-    DPOPair,
     DataConstitution,
+    DPOPair,
     TAPTracer,
     TraceRecord,
     TraceStats,
 )
-from teragent.core.tap import TAPRequest, TAPResponse
-
 
 # ===== TraceRecord 测试 =====
 
@@ -274,7 +272,7 @@ class TestTAPTracerRecording:
         """禁用的 tracer 不记录"""
         tracer = TAPTracer(enabled=False)
         request = TAPRequest(meta={"task_id": "1.1"}, instruction="test")
-        trace_id = await tracer.record_request(request)
+        _trace_id = await tracer.record_request(request)
         assert len(tracer) == 0
 
 
@@ -386,7 +384,7 @@ class TestTAPTracerExport:
         output_path = tracer.export_traces_jsonl()
         assert os.path.isfile(output_path)
         with open(output_path, 'r', encoding='utf-8') as f:
-            lines = [l for l in f.readlines() if l.strip()]
+            lines = [line for line in f.readlines() if line.strip()]
         assert len(lines) >= 2  # constitution header + 1 record
 
     @pytest.mark.asyncio

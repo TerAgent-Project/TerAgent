@@ -18,7 +18,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, Optional
+from typing import Awaitable, Callable, Optional
 
 from teragent.core.types import ToolSafety
 

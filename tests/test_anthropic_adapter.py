@@ -15,16 +15,15 @@
   - 连接池管理
   - __del__ 方法行为
 """
-import pytest
 import httpx
+import pytest
 
 from teragent.core.adapters.anthropic_native import (
-    AnthropicNativeAdapter,
     _FAKE_TOOLS_OPENAI,
     FAKE_TOOL_NAMES,
+    AnthropicNativeAdapter,
     _detect_anthropic_fake_tool_call,
 )
-
 
 # ===== __init__ 参数存储 =====
 

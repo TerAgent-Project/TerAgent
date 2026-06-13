@@ -10,25 +10,21 @@
   - DesktopSafetyConfig 配置
   - register_desktop_tool 注册便捷函数
 """
-import asyncio
 import time
 
 import pytest
 
-from teragent.tools.desktop import (
-    DesktopTool,
-    DesktopSafetyConfig,
-    register_desktop_tool,
-    _HAS_PYAUTOGUI,
-    _HAS_PIL,
-    _HAS_MSS,
-    _BLOCKED_SHORTCUTS,
-)
-from teragent.tools.base import ToolResult
-from teragent.tools.registry import ToolRegistry
-from teragent.core.types import ToolSafety
 from teragent.core.tap import DesktopContext, MultimodalContent
-
+from teragent.core.types import ToolSafety
+from teragent.tools.desktop import (
+    _HAS_MSS,
+    _HAS_PIL,
+    _HAS_PYAUTOGUI,
+    DesktopSafetyConfig,
+    DesktopTool,
+    register_desktop_tool,
+)
+from teragent.tools.registry import ToolRegistry
 
 # ===== 基础属性 =====
 
@@ -468,7 +464,7 @@ class TestRegisterDesktopTool:
     def test_register_overwrites_existing(self):
         """重复注册覆盖已有工具"""
         registry = ToolRegistry()
-        tool1 = register_desktop_tool(registry)
+        _tool1 = register_desktop_tool(registry)
         tool2 = register_desktop_tool(registry)
         assert registry.get("desktop") is tool2
 

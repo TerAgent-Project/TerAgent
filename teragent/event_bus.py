@@ -16,13 +16,13 @@ Phase 7.3 增强：支持结构化 Message 事件
 """
 
 import asyncio
-import time
 import logging
+import time
 from collections import defaultdict
-from typing import Callable, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
-    from teragent.core.types import Message, MessageType
+    from teragent.core.types import Message
 
 logger = logging.getLogger(__name__)
 

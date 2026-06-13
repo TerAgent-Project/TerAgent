@@ -30,22 +30,22 @@
   6. FileStateTracker.record_write() 记录写入
 """
 
-import os
 import asyncio
 import logging
+import os
 import shutil
 import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from teragent.security.permission import PermissionLevel, PermissionManager
 from teragent.utils.exceptions import SandboxViolation
-from teragent.security.permission import PermissionManager, PermissionLevel
 
 # Phase 9.4: Enhanced permission support
 if TYPE_CHECKING:
-    from teragent.security.permission import EnhancedPermissionManager
     from teragent.security.file_state import FileStateTracker
+    from teragent.security.permission import EnhancedPermissionManager
 
 logger = logging.getLogger(__name__)
 

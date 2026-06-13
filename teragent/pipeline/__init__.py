@@ -17,15 +17,15 @@ Reference implementations (in examples/full_agent/):
 """
 
 # Phase 10: TAP tracing + DPO pair generation
-from teragent.pipeline.tracing import (
-    TAPTracer,
-    TraceRecord,
-    DPOPair,
-    DataConstitution,
-    TraceStats,
-)
 # Sub-agent worker
 from teragent.pipeline.subagent_worker import SubAgentWorker
+from teragent.pipeline.tracing import (
+    DataConstitution,
+    DPOPair,
+    TAPTracer,
+    TraceRecord,
+    TraceStats,
+)
 
 __all__ = [
     "TAPTracer",

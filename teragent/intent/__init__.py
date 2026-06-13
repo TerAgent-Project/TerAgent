@@ -4,7 +4,7 @@
 """
 
 from teragent.intent.classifier import IntentClassifier, IntentType
-from teragent.intent.confirmation import ConfirmationGate, _CONFIRM_TIMEOUT, _M1_CONFIRM_TIMEOUT
+from teragent.intent.confirmation import _CONFIRM_TIMEOUT, _M1_CONFIRM_TIMEOUT, ConfirmationGate
 
 __all__ = [
     "IntentClassifier",

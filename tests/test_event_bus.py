@@ -12,10 +12,8 @@
   - emit_message: 结构化消息事件
 """
 import asyncio
+
 import pytest
-
-from teragent.event_bus import EventBus
-
 
 # ===== on/emit 基础功能 =====
 

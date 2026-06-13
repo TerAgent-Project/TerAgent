@@ -16,12 +16,12 @@
 
 import logging
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from teragent.context.context_window import ContextWindow
-from teragent.context.profiles import GLM5CompactionStrategy
 from teragent.context.microcompactor import Microcompactor
-from teragent.core.types import Message, MessageRole, MessageType
+from teragent.context.profiles import GLM5CompactionStrategy
+from teragent.core.types import Message, MessageRole
 
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider

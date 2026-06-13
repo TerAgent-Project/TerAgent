@@ -6,7 +6,6 @@
 长期目标：在 agent.toml 中添加 token_counting_method = "tiktoken" | "estimate" 配置。
 """
 import re
-from functools import lru_cache
 
 
 def estimate_tokens(text: str | None, content_type: str = "auto") -> int:

@@ -8,14 +8,14 @@
   - Agent 注册/注销
   - 非阻塞接收
 """
-import asyncio
+
 import pytest
 
 from teragent.coordination.message_bus import (
-    AgentMessage,
-    AgentMessageBus,
     BROADCAST,
     MAILBOX_MAX_SIZE,
+    AgentMessage,
+    AgentMessageBus,
 )
 from teragent.event_bus import EventBus
 

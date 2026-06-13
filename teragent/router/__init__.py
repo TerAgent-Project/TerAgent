@@ -12,12 +12,12 @@ Components:
 """
 
 from teragent.router.model_router import (
+    ModelRouter,
+    PipelineManager,
+    PipelineProfile,
     RoutingDecision,
     RoutingReason,
     RoutingTable,
-    ModelRouter,
-    PipelineProfile,
-    PipelineManager,
 )
 
 __all__ = [

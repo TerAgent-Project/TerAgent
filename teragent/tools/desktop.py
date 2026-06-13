@@ -24,11 +24,11 @@ import io
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
-from teragent.tools.base import BaseTool, ToolResult
+from teragent.core.tap import DesktopContext, MultimodalContent
 from teragent.core.types import ToolSafety
-from teragent.core.tap import MultimodalContent, DesktopContext
+from teragent.tools.base import BaseTool, ToolResult
 from teragent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -651,9 +651,9 @@ class DesktopTool(BaseTool):
         import subprocess
 
         # 保存剪贴板内容（尽量恢复）
-        saved_clipboard = ""
+        _saved_clipboard = ""
         try:
-            saved_clipboard = pyautogui.hotkey  # type: ignore[attr-defined]
+            _saved_clipboard = pyautogui.hotkey  # type: ignore[attr-defined]
         except Exception:
             pass
 

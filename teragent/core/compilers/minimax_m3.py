@@ -20,8 +20,8 @@ import json
 import logging
 from typing import Optional
 
-from teragent.core.tap import TAPRequest, CompiledPrompt, MultimodalContent
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, MultimodalContent, TAPRequest
 
 logger = logging.getLogger(__name__)
 

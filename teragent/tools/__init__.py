@@ -9,11 +9,11 @@
   - ToolOrchestrator: 工具并行编排器
 """
 
-from teragent.tools.base import BaseTool, ToolResult
 from teragent.core.types import ToolSafety
+from teragent.tools.base import BaseTool, ToolResult
+from teragent.tools.desktop import DesktopSafetyConfig, DesktopTool
+from teragent.tools.orchestrator import MAX_CONCURRENT_TOOLS, ToolOrchestrator
 from teragent.tools.registry import ToolRegistry
-from teragent.tools.orchestrator import ToolOrchestrator, MAX_CONCURRENT_TOOLS
-from teragent.tools.desktop import DesktopTool, DesktopSafetyConfig
 
 __all__ = [
     "BaseTool",

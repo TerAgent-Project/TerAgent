@@ -54,7 +54,6 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
 
 from teragent.core.tap import TAPRequest, TAPResponse
 

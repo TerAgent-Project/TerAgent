@@ -8,14 +8,12 @@
   - 降级逻辑: Firecracker→Docker→subprocess
   - _capture_output: 输出捕获
 """
-import os
-import shlex
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 from teragent.security.firecracker_sandbox import FirecrackerSandbox
 from teragent.security.sandbox import execute_in_sandbox
-
 
 # ===== _generate_config (M6: shlex.quote) =====
 

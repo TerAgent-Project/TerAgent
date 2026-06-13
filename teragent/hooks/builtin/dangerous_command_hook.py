@@ -26,7 +26,6 @@
 如需自定义模式，请修改 sandbox 模块的黑名单。
 """
 import logging
-from typing import Awaitable, Callable
 
 from teragent.hooks.manager import (
     HookContext,
@@ -177,7 +176,7 @@ class DangerousCommandHook(PythonHook):
 
         # Use unified risk classification from sandbox module
         # ALWAYS check sandbox classification — it cannot be bypassed by warning patterns
-        from teragent.security.sandbox import classify_command_risk, CommandRiskLevel
+        from teragent.security.sandbox import CommandRiskLevel, classify_command_risk
 
         risk_level, reason = classify_command_risk(command)
 

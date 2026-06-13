@@ -20,46 +20,34 @@ AgentLoop has been migrated to the teragent package.
 
 from __future__ import annotations
 
-import asyncio
 import sys
-import time
 import unittest
-import pytest
-from unittest.mock import (
-    AsyncMock,
-    MagicMock,
-    PropertyMock,
-    patch,
-)
 
 # Ensure the project root is importable
 from pathlib import Path
+from unittest.mock import (
+    MagicMock,
+)
+
 _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from teragent.streaming.streaming_executor import (
+from teragent.agent_loop import AgentLoop  # noqa: E402
+from teragent.config.agent_loop_config import AgentLoopConfig  # noqa: E402
+from teragent.core.types import ToolSafety  # noqa: E402
+from teragent.event_bus import EventBus  # noqa: E402
+from teragent.streaming.stream_events import (  # noqa: E402
+    StreamEvent,
+    StreamEventType,
+)
+from teragent.streaming.streaming_executor import (  # noqa: E402
     StreamingExecutionStats,
     StreamingToolExecutor,
 )
-from teragent.streaming.stream_events import (
-    StreamEvent,
-    StreamEventType,
-    StreamingChatResult,
-)
-from teragent.tools.base import BaseTool, ToolResult
-from teragent.core.types import ToolSafety
-from teragent.tools.registry import ToolRegistry
-from teragent.tools.orchestrator import ToolOrchestrator
-from teragent.event_bus import EventBus
-from teragent.core.provider import ModelProvider
-from teragent.intent.classifier import IntentClassifier, IntentType
-from teragent.intent.confirmation import ConfirmationGate
-from teragent.context.context_window import ContextWindow
-from teragent.context.microcompactor import Microcompactor
-from teragent.agent_loop import AgentLoop
-from teragent.config.agent_loop_config import AgentLoopConfig
-
+from teragent.tools.base import BaseTool, ToolResult  # noqa: E402
+from teragent.tools.orchestrator import ToolOrchestrator  # noqa: E402
+from teragent.tools.registry import ToolRegistry  # noqa: E402
 
 # ===== Helper: Concrete tool implementations for testing =====
 

@@ -22,37 +22,34 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any
 
 from teragent.config.agent_loop_config import AgentLoopConfig
-from teragent.core.provider import ModelProvider
-from teragent.core.types import Message, MessageRole, MessageType
-from teragent.tools.registry import ToolRegistry
-from teragent.tools.orchestrator import ToolOrchestrator
-from teragent.tools.base import ToolResult
-from teragent.streaming.streaming_executor import (
-    StreamingToolExecutor,
-    StreamingExecutionStats,
-)
-from teragent.streaming.stream_events import StreamEvent, StreamEventType
-from teragent.event_bus import EventBus
-from teragent.context.context_window import ContextWindow
 from teragent.context.auto_compact import AutoCompactor
-from teragent.reliability.budget import StepBudget
-from teragent.reliability.circuit_breaker import CircuitBreakerManager
-from teragent.reliability.recovery import RecoveryManager, RecoveryType
-from teragent.security.permission import EnhancedPermissionManager
+from teragent.context.context_window import ContextWindow
+from teragent.coordination.message_bus import BROADCAST, AgentMessage, AgentMessageBus
+from teragent.coordination.sub_agent_manager import AgentMode, SubAgentManager
+from teragent.core.provider import ModelProvider
+from teragent.core.tap import LongHorizonConfig, TAPRequest
+from teragent.core.types import Message, MessageRole, MessageType
+from teragent.event_bus import EventBus
+from teragent.hooks.manager import HookManager
 from teragent.intent.classifier import IntentClassifier, IntentType
 from teragent.intent.confirmation import ConfirmationGate
-from teragent.coordination.message_bus import AgentMessageBus, AgentMessage, BROADCAST
-from teragent.coordination.sub_agent_manager import SubAgentManager, AgentMode
-from teragent.hooks.manager import HookManager
-from teragent.session.persistence import SessionPersistence
 from teragent.long_horizon.task_manager import LongHorizonTaskManager
 from teragent.long_horizon.types import LongHorizonResult
-from teragent.core.tap import LongHorizonConfig
+from teragent.reliability.budget import CrossModelCostTracker, StepBudget
+from teragent.reliability.circuit_breaker import CircuitBreakerManager
+from teragent.reliability.recovery import RecoveryManager, RecoveryType
 from teragent.router.model_router import ModelRouter, RoutingDecision, RoutingReason
-from teragent.reliability.budget import CrossModelCostTracker
+from teragent.security.permission import EnhancedPermissionManager
+from teragent.session.persistence import SessionPersistence
+from teragent.streaming.streaming_executor import (
+    StreamingToolExecutor,
+)
+from teragent.tools.base import ToolResult
+from teragent.tools.orchestrator import ToolOrchestrator
+from teragent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -749,7 +746,7 @@ class AgentLoop:
         for attempt in range(self._max_streaming_retries + 1):
             try:
                 # Build the stream via model's stream_tap
-                from teragent.core.tap import TAPRequest, CompiledPrompt
+                from teragent.core.tap import CompiledPrompt
 
                 # Build a compiled prompt from messages
                 compiled = CompiledPrompt(
@@ -1150,7 +1147,6 @@ class AgentLoop:
         Raises:
             RuntimeError: If no suitable provider is found
         """
-        from teragent.core.tap import TAPResponse
 
         decision = self.route_request(request)
 
@@ -1184,7 +1180,7 @@ class AgentLoop:
 
             return response
 
-        except Exception as e:
+        except Exception:
             # Record failed cost
             if self._cost_tracker is not None:
                 self._cost_tracker.record_from_tap_response(

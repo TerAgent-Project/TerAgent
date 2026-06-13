@@ -13,20 +13,21 @@
 """
 import asyncio
 import os
-import pytest
 from pathlib import Path
 
-from teragent.event_bus import EventBus
+import pytest
+
 from teragent.core.adapters.mock import MockAdapter
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.provider import ModelProvider
-from teragent.core.tap import TAPRequest, TAPResponse
-from teragent.security.sandbox import check_command_safety
-from teragent.security.permission import (
-    EnhancedPermissionManager, PermissionRule, PermissionEffect, PermissionLevel,
-)
-from teragent.security.file_state import FileStateTracker
+from teragent.core.tap import TAPRequest
+from teragent.event_bus import EventBus
 from teragent.reliability.circuit_breaker import CircuitBreakerManager
+from teragent.security.file_state import FileStateTracker
+from teragent.security.permission import (
+    EnhancedPermissionManager,
+)
+from teragent.security.sandbox import check_command_safety
 from teragent.utils.exceptions import SandboxViolation
 
 

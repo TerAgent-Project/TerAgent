@@ -13,13 +13,13 @@ Available compilers:
 """
 
 from teragent.core.compiler import TAPCompilerRegistry
+from teragent.core.compilers import anthropic as _anthropic
+from teragent.core.compilers import deepseek as _deepseek
+from teragent.core.compilers import deepseek_v4 as _deepseek_v4
 
 # Import compiler modules to trigger registration
 from teragent.core.compilers import default as _default
 from teragent.core.compilers import glm as _glm
-from teragent.core.compilers import anthropic as _anthropic
-from teragent.core.compilers import deepseek as _deepseek
-from teragent.core.compilers import deepseek_v4 as _deepseek_v4
 from teragent.core.compilers import glm_5 as _glm_5
 from teragent.core.compilers import minimax_m3 as _minimax_m3
 

@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import random
 import statistics
 import time
@@ -32,20 +31,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from teragent.core.adapters.mock import MockAdapter
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.tap import (
-    TAPRequest,
-    TAPResponse,
-    CompiledPrompt,
-    MultimodalContent,
     DesktopContext,
     LongHorizonConfig,
-    LongHorizonStatus,
-    TAPCostRecord,
-    CostTracker,
+    MultimodalContent,
+    TAPRequest,
+    TAPResponse,
 )
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-from teragent.core.adapter import TAPAdapter
-from teragent.core.adapters.mock import MockAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -629,16 +623,16 @@ class LatencyBenchmark(BaseBenchmark):
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
                             # If we're inside an existing event loop, create a task
-                            response = asyncio.ensure_future(
+                            _response = asyncio.ensure_future(
                                 adapter.send(compiled, model_name)
                             )
                         else:
-                            response = loop.run_until_complete(
+                            _response = loop.run_until_complete(
                                 adapter.send(compiled, model_name)
                             )
                     except RuntimeError:
                         # No event loop exists, create one
-                        response = asyncio.run(
+                        _response = asyncio.run(
                             adapter.send(compiled, model_name)
                         )
                     send_elapsed = (time.perf_counter() - send_start) * 1000
@@ -1066,7 +1060,7 @@ class LongHorizonBenchmark(BaseBenchmark):
         switch_samples: list[float] = []
         for _ in range(self.iterations):
             start = time.perf_counter()
-            switch_prompt = glm.build_strategy_switch_prompt("连续3次相同结果")
+            _switch_prompt = glm.build_strategy_switch_prompt("连续3次相同结果")
             elapsed = (time.perf_counter() - start) * 1000
             switch_samples.append(elapsed)
 
@@ -1362,11 +1356,11 @@ class FaultRecoveryBenchmark(BaseBenchmark):
     def run(self) -> list[BenchmarkResult]:
         results: list[BenchmarkResult] = []
 
-        from teragent.reliability.circuit_breaker import (
-            ConsecutiveFailureBreaker,
-            CircuitBreakerManager,
-        )
         from teragent.event_bus import EventBus
+        from teragent.reliability.circuit_breaker import (
+            CircuitBreakerManager,
+            ConsecutiveFailureBreaker,
+        )
 
         # Scenario 1: Circuit breaker trigger timing
         cb_result = BenchmarkResult(
@@ -1378,7 +1372,7 @@ class FaultRecoveryBenchmark(BaseBenchmark):
         trigger_samples: list[float] = []
         for _ in range(20):  # Fewer iterations for circuit breaker
             bus = EventBus()
-            manager = CircuitBreakerManager(bus=bus)
+            _manager = CircuitBreakerManager(bus=bus)
             breaker = ConsecutiveFailureBreaker(
                 max_consecutive=5,
                 window_seconds=300.0,
@@ -1423,9 +1417,9 @@ class FaultRecoveryBenchmark(BaseBenchmark):
             fallback_driver = routing_table.degradation_map.get(decision1.selected_driver, "")
             if fallback_driver:
                 # Second choice: fallback
-                fallback_compiler = routing_table.resolve_compiler(fallback_driver)
+                _fallback_compiler = routing_table.resolve_compiler(fallback_driver)
                 # If fallback also fails, go further
-                second_fallback = routing_table.degradation_map.get(fallback_driver, "")
+                _second_fallback = routing_table.degradation_map.get(fallback_driver, "")
             elapsed = (time.perf_counter() - start) * 1000
             degradation_samples.append(elapsed)
 

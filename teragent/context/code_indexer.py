@@ -340,8 +340,8 @@ class CodeIndexer:
             return
 
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
         except ImportError:
             logger.warning(
                 "watchdog not installed — file watching disabled. "

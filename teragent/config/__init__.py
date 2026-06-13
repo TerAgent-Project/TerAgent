@@ -47,59 +47,60 @@ Key functions:
 """
 
 # Phase 2: Driver config
-from teragent.config.driver_config import DriverConfig
-
-# Phase 5: All sub-config dataclasses
-from teragent.config.teragent_config import TerAgentConfig, AgentdSectionConfig
-from teragent.config.circuit_breaker_config import (
-    CircuitBreakerConfig,
-    BudgetConfig,
-    FailureBreakerConfig,
-    LatencyBreakerConfig,
-    ProgressDetectorConfig,
-)
-from teragent.config.context_management_config import ContextManagementConfig
-from teragent.config.tools_config import ToolsConfig
-from teragent.config.file_safety_config import FileSafetyConfig
-from teragent.config.session_config import SessionConfig
-from teragent.config.permission_config import PermissionConfig
-from teragent.config.hooks_config import HooksConfig
-from teragent.config.recovery_config import RecoveryConfig
-from teragent.config.streaming_config import StreamingConfig
-from teragent.config.coordination_config import CoordinationConfig
-from teragent.config.execution_pipeline_config import ExecutionPipelineConfig
-from teragent.config.model_fallback_config import ModelFallbackConfig
-
 # AgentLoop config (Phase 0.1 migrated)
 from teragent.config.agent_loop_config import AgentLoopConfig
-
-# Phase 2: Loaders (re-exported)
-from teragent.config.loader import (
-    load_driver_configs,
-    load_pipeline_config,
-    load_full_config,
-    create_provider_from_config,
-    get_driver_config,
-    resolve_api_key,
-    resolve_api_key_detailed,
-    infer_compiler,
-    load_typed_config,
-    audit_config_security,
-)
 
 # Phase 9: API Key Security
 from teragent.config.api_key_security import (
     ApiKeyVault,
     ResolvedKey,
+    SecurityError,
     SecurityFinding,
     SecuritySeverity,
-    SecurityError,
-    mask_api_key,
-    detect_api_key_provider,
-    audit_config_security as audit_api_key_security,
     audit_env_file,
+    detect_api_key_provider,
     get_vault,
+    mask_api_key,
 )
+from teragent.config.api_key_security import (
+    audit_config_security as audit_api_key_security,
+)
+from teragent.config.circuit_breaker_config import (
+    BudgetConfig,
+    CircuitBreakerConfig,
+    FailureBreakerConfig,
+    LatencyBreakerConfig,
+    ProgressDetectorConfig,
+)
+from teragent.config.context_management_config import ContextManagementConfig
+from teragent.config.coordination_config import CoordinationConfig
+from teragent.config.driver_config import DriverConfig
+from teragent.config.execution_pipeline_config import ExecutionPipelineConfig
+from teragent.config.file_safety_config import FileSafetyConfig
+from teragent.config.hooks_config import HooksConfig
+
+# Phase 2: Loaders (re-exported)
+from teragent.config.loader import (
+    audit_config_security,
+    create_provider_from_config,
+    get_driver_config,
+    infer_compiler,
+    load_driver_configs,
+    load_full_config,
+    load_pipeline_config,
+    load_typed_config,
+    resolve_api_key,
+    resolve_api_key_detailed,
+)
+from teragent.config.model_fallback_config import ModelFallbackConfig
+from teragent.config.permission_config import PermissionConfig
+from teragent.config.recovery_config import RecoveryConfig
+from teragent.config.session_config import SessionConfig
+from teragent.config.streaming_config import StreamingConfig
+
+# Phase 5: All sub-config dataclasses
+from teragent.config.teragent_config import AgentdSectionConfig, TerAgentConfig
+from teragent.config.tools_config import ToolsConfig
 
 __all__ = [
     # Top-level config

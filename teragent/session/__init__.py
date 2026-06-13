@@ -15,11 +15,11 @@
 """
 
 from teragent.session.persistence import (
-    SessionPersistence,
     SessionData,
     SessionInfo,
-    _message_to_dict,
+    SessionPersistence,
     _message_from_dict,
+    _message_to_dict,
 )
 
 __all__ = [

@@ -13,16 +13,16 @@
 """
 
 from teragent.streaming.stream_events import (
-    StreamEventType,
-    StreamEvent,
-    ToolCallAccumulator,
-    StreamingChatResult,
-    OpenAIStreamParser,
     AnthropicStreamParser,
+    OpenAIStreamParser,
+    StreamEvent,
+    StreamEventType,
+    StreamingChatResult,
+    ToolCallAccumulator,
 )
 from teragent.streaming.streaming_executor import (
-    StreamingToolExecutor,
     StreamingExecutionStats,
+    StreamingToolExecutor,
 )
 
 __all__ = [

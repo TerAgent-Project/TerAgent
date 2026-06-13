@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from teragent.core.tap import TAPRequest, CompiledPrompt
+    from teragent.core.tap import CompiledPrompt, TAPRequest
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class TAPCompiler(ABC):
 
     Subclasses conventionally implement:
         _do_compile(system_prompt, request) -> CompiledPrompt
-    
+
     The only strict requirement is overriding the abstract `compile()` method.
     Concrete subclasses typically factor their logic into `_do_compile()`,
     but this is a convention, not enforced by the ABC.

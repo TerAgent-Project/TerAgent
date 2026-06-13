@@ -11,24 +11,31 @@ All tests use MockAdapter — no real API calls.
 
 from __future__ import annotations
 
-import pytest
 import time
 
-from teragent.core.tap import (
-    TAPRequest, TAPResponse, MultimodalContent, DesktopContext, LongHorizonConfig,
-)
-from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.adapters.mock import MockAdapter
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.provider import ModelProvider
-from teragent.router.model_router import (
-    ModelRouter, RoutingTable, RoutingDecision, RoutingReason,
-    PipelineProfile, PipelineManager,
+from teragent.core.tap import (
+    DesktopContext,
+    LongHorizonConfig,
+    MultimodalContent,
+    TAPRequest,
 )
 from teragent.reliability.budget import (
-    StepBudget, CostRecord, MonthlyBudgetConfig, CrossModelCostTracker,
+    CostRecord,
+    CrossModelCostTracker,
+    MonthlyBudgetConfig,
+    StepBudget,
 )
 from teragent.reliability.circuit_breaker import BreakerState
-
+from teragent.router.model_router import (
+    ModelRouter,
+    PipelineManager,
+    PipelineProfile,
+    RoutingReason,
+    RoutingTable,
+)
 
 # ===== Helpers =====
 
@@ -1003,7 +1010,7 @@ class TestP3_5_EndToEnd:
 
     def test_all_compilers_still_work(self):
         """Regression: all 8 compilers still compile successfully with router"""
-        router = _create_test_router()
+        _router = _create_test_router()
 
         for compiler_name in ["deepseek_v4", "glm_5", "minimax_m3", "default", "glm", "deepseek"]:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)

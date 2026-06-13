@@ -10,18 +10,18 @@
   - 清单结果结构
 """
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 from teragent.pipeline.checklist import (
     TaskInfo,
     check_code_quality,
-    check_requirements,
-    check_file_conflicts,
     check_fallback_files,
+    check_file_conflicts,
+    check_requirements,
     run_deterministic_checks,
 )
-
 
 # ===== 辅助 fixture =====
 

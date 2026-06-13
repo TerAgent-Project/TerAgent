@@ -15,22 +15,32 @@
   9. ModelProvider 完整集成: create_provider() 工厂函数
 """
 import asyncio
+
 import pytest
 
-from teragent.core.tap import (
-    TAPRequest, TAPResponse, CompiledPrompt,
-    MultimodalContent, DesktopContext, LongHorizonConfig, LongHorizonStatus,
-)
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-from teragent.core.adapter import TAPAdapter, TAPAdapterRegistry
-from teragent.core.compilers import (
-    DefaultCompiler, GLMCompiler, AnthropicCompiler, DeepSeekCompiler,
-    DeepSeekV4Compiler, GLM5Compiler, MiniMaxM3Compiler,
-)
-from teragent.core.adapters.mock import MockAdapter
-from teragent.core.provider import ModelProvider
 from teragent.config.driver_config import DriverConfig
-
+from teragent.core.adapter import TAPAdapterRegistry
+from teragent.core.adapters.mock import MockAdapter
+from teragent.core.compiler import TAPCompilerRegistry
+from teragent.core.compilers import (
+    AnthropicCompiler,
+    DeepSeekCompiler,
+    DeepSeekV4Compiler,
+    DefaultCompiler,
+    GLM5Compiler,
+    GLMCompiler,
+    MiniMaxM3Compiler,
+)
+from teragent.core.provider import ModelProvider
+from teragent.core.tap import (
+    CompiledPrompt,
+    DesktopContext,
+    LongHorizonConfig,
+    LongHorizonStatus,
+    MultimodalContent,
+    TAPRequest,
+    TAPResponse,
+)
 
 # ===== 辅助函数 =====
 

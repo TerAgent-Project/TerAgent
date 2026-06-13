@@ -5,8 +5,8 @@ Anthropic-specific compilation with XML tag structured optimization (Claude pref
 
 from __future__ import annotations
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 
 class AnthropicCompiler(TAPCompiler):

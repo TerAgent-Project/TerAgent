@@ -18,16 +18,16 @@ Available adapters:
 """
 
 # Import adapter modules to trigger TAPAdapterRegistry.register() calls
-from teragent.core.adapters import openai_compatible as _openai  # noqa: F401
 from teragent.core.adapters import anthropic_native as _anthropic  # noqa: F401
 from teragent.core.adapters import minimax_native as _minimax  # noqa: F401
 from teragent.core.adapters import mock as _mock  # noqa: F401
-
-# Re-export adapter classes for convenience
-from teragent.core.adapters.openai_compatible import OpenAICompatibleAdapter
+from teragent.core.adapters import openai_compatible as _openai  # noqa: F401
 from teragent.core.adapters.anthropic_native import AnthropicNativeAdapter
 from teragent.core.adapters.minimax_native import MiniMaxNativeAdapter
 from teragent.core.adapters.mock import MockAdapter
+
+# Re-export adapter classes for convenience
+from teragent.core.adapters.openai_compatible import OpenAICompatibleAdapter
 
 __all__ = [
     "OpenAICompatibleAdapter",

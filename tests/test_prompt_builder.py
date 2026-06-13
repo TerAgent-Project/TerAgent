@@ -6,12 +6,9 @@
   - Token 预算验证
   - build_subagent_prompt 向后兼容
 """
-import pytest
 
 from teragent.pipeline.prompt_builder import (
     CHARS_PER_TOKEN,
-    DEFAULT_SYSTEM_TEMPLATE,
-    DEFAULT_TOKEN_BUDGET,
     build_prompt,
     build_subagent_prompt,
     validate_prompt_tokens,

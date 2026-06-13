@@ -12,34 +12,30 @@
   - M16: Compiler/Adapter mode mismatch 警告
 """
 import logging
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock
 
-from teragent.core.types import Message, MessageRole, MessageType
-from teragent.core.tap import CompiledPrompt, TAPRequest, TAPResponse
-from teragent.core.compiler import TAPCompiler
-from teragent.core.adapter import TAPAdapter
-from teragent.core.provider import ModelProvider
-from teragent.streaming.stream_events import (
-    OpenAIStreamParser,
-    StreamEvent,
-    StreamEventType,
-    ToolCallAccumulator,
-)
-from teragent.pipeline.tracing import DPOPair, TraceRecord, TAPTracer
-from teragent.security.permission import (
-    EnhancedPermissionManager,
-    PermissionLevel,
-    PermissionEffect,
-    PermissionRule,
-)
-from teragent.security.sandbox import check_command_safety
-from teragent.tools.base import ToolResult
+import pytest
+
 from teragent.agent_loop import AgentLoop
 from teragent.config.agent_loop_config import AgentLoopConfig
+from teragent.core.adapter import TAPAdapter
+from teragent.core.compiler import TAPCompiler
+from teragent.core.provider import ModelProvider
+from teragent.core.tap import CompiledPrompt, TAPResponse
+from teragent.core.types import MessageRole, MessageType
+from teragent.pipeline.tracing import DPOPair, TAPTracer, TraceRecord
+from teragent.security.permission import (
+    EnhancedPermissionManager,
+    PermissionEffect,
+    PermissionLevel,
+)
+from teragent.security.sandbox import check_command_safety
+from teragent.streaming.stream_events import (
+    OpenAIStreamParser,
+    StreamEventType,
+)
+from teragent.tools.base import ToolResult
 from teragent.tools.registry import ToolRegistry
-
 
 # ===== B2: system prompt 不累积 =====
 
@@ -367,7 +363,6 @@ class TestDPOTraceIdBasedMatching:
         """TAPTracer.export_dpo_pairs 应使用 trace_id 匹配而非位置索引。
         通过构造特定记录验证配对结果。"""
         import tempfile
-        import os
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tracer = TAPTracer(trace_dir=tmpdir, enabled=False)
@@ -714,7 +709,7 @@ class TestAgentLoopStreamingToolResultsConsumed:
         # 确保 streaming 模式关闭
         loop.set_streaming_config(mode="batch")
 
-        result = await loop.run("test", messages=[], system_prompt="sys")
+        _result = await loop.run("test", messages=[], system_prompt="sys")
 
         # batch 模式下 _streaming_tool_results 应保持为空
         assert loop._streaming_tool_results == [], (

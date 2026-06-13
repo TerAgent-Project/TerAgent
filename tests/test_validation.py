@@ -10,16 +10,18 @@
 """
 import pytest
 
-from teragent.security.sandbox import check_command_safety
-from teragent.security.permission import (
-    EnhancedPermissionManager, PermissionRule, PermissionEffect, PermissionLevel,
-)
-from teragent.reliability.circuit_breaker import CircuitBreakerManager
 from teragent.core.adapters.mock import MockAdapter
-from teragent.core.tap import TAPRequest
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.provider import ModelProvider
-
+from teragent.core.tap import TAPRequest
+from teragent.reliability.circuit_breaker import CircuitBreakerManager
+from teragent.security.permission import (
+    EnhancedPermissionManager,
+    PermissionEffect,
+    PermissionLevel,
+    PermissionRule,
+)
+from teragent.security.sandbox import check_command_safety
 
 # ===== P6: 安全沙箱黑名单验证 =====
 

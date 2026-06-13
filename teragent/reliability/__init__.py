@@ -15,41 +15,39 @@ Components:
     - RateLimitHandler: Unified rate limiting across models (P4-3)
 """
 
+from teragent.reliability.budget import (
+    DEFAULT_MAX_STEPS,
+    CostRecord,
+    CrossModelCostTracker,
+    MonthlyBudgetConfig,
+    StepBudget,
+)
 from teragent.reliability.circuit_breaker import (
-    BudgetCheckResult,
     BreakerState,
+    BudgetCheckResult,
+    CircuitBreakerManager,
+    ConsecutiveFailureBreaker,
     CostBudgetConfig,
     CostBudgetTracker,
-    ConsecutiveFailureBreaker,
     LatencyBreaker,
-    ProgressDetector,
-    CircuitBreakerManager,
     # P4-3: Per-model circuit breaker
     ModelBreakerConfig,
     ModelBreakerState,
     ModelCircuitBreakerManager,
+    ProgressDetector,
 )
-
-from teragent.reliability.budget import (
-    DEFAULT_MAX_STEPS,
-    StepBudget,
-    CostRecord,
-    MonthlyBudgetConfig,
-    CrossModelCostTracker,
-)
-
 from teragent.reliability.recovery import (
-    RecoveryType,
-    RecoveryStats,
-    RecoveryManagerConfig,
-    RecoveryManager,
-    is_context_overflow_error,
-    is_retryable_error,
     # P4-3: Fault recovery enhancement
     DegradationChain,
     LongHorizonRecoveryManager,
-    RateLimitInfo,
     RateLimitHandler,
+    RateLimitInfo,
+    RecoveryManager,
+    RecoveryManagerConfig,
+    RecoveryStats,
+    RecoveryType,
+    is_context_overflow_error,
+    is_retryable_error,
 )
 
 __all__ = [

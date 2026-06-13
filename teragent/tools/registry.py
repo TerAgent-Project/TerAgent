@@ -14,8 +14,9 @@
   - 注册表不关心工具的内部状态，只管理"注册"这个维度
 """
 import logging
-from teragent.tools.base import BaseTool
+
 from teragent.core.types import ToolSafety
+from teragent.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 

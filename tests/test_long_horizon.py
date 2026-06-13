@@ -10,19 +10,15 @@
   - StrategySwitcher 策略切换检测和记录
 """
 
-import asyncio
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from teragent.long_horizon.types import SubGoal, PhaseResult, LongHorizonResult
-from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
-from teragent.long_horizon.progress import ProgressTracker, ProgressReport
-from teragent.long_horizon.task_manager import LongHorizonTaskManager
 from teragent.core.tap import LongHorizonConfig
-
+from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
+from teragent.long_horizon.progress import ProgressTracker
+from teragent.long_horizon.task_manager import LongHorizonTaskManager
+from teragent.long_horizon.types import LongHorizonResult, PhaseResult, SubGoal
 
 # ===== 数据类型测试 =====
 

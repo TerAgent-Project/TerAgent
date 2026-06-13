@@ -1,8 +1,8 @@
 # teragent/context/dependency_reporter.py
 import asyncio
-import os
 import logging
-from typing import Protocol, TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from teragent.context.code_indexer import CodeIndexer

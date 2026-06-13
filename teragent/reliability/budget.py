@@ -14,9 +14,9 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 # Module-level default — replaces the former MAX_TOOL_STEPS import.
 # The value 30 matches the original AgentLoopConfig.max_tool_steps default.

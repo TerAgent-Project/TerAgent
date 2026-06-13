@@ -8,13 +8,13 @@
   - 重置行为
   - _format_for_summary / _fallback_summary
 """
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from teragent.context.auto_compact import AutoCompactor
 from teragent.context.context_window import ContextWindow
 from teragent.core.types import Message, MessageRole, MessageType
-
 
 # ===== 辅助 =====
 

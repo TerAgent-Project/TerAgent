@@ -10,15 +10,13 @@
   - 代码块语言检测
   - 各种文件路径格式提取
 """
-import pytest
 
 from teragent.pipeline.extractor import (
-    extract_files_from_response,
+    _clean_markdown_artifacts,
     _extract_filename_hints,
     _infer_filename_from_code,
-    _clean_markdown_artifacts,
+    extract_files_from_response,
 )
-
 
 # ===== 1 级: 严格 XML 提取 =====
 

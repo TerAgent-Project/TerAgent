@@ -5,8 +5,8 @@ Generic OpenAI-compatible compilation strategy using multi-turn context injectio
 
 from __future__ import annotations
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 
 class DefaultCompiler(TAPCompiler):

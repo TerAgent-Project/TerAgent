@@ -4,20 +4,18 @@
 测试 @experimental 装饰器、span 生命周期、request_id 管理等。
 """
 import warnings
-import pytest
 
 from teragent.utils.tracing import (
-    experimental,
-    start_span,
-    end_span,
-    get_all_spans,
-    get_span_summary,
-    get_request_id,
-    set_request_id,
-    reset_request_id,
     Span,
+    end_span,
+    experimental,
+    get_all_spans,
+    get_request_id,
+    get_span_summary,
+    reset_request_id,
+    set_request_id,
+    start_span,
 )
-
 
 # ===== @experimental 装饰器 =====
 

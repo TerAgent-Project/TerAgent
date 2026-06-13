@@ -11,15 +11,13 @@
   - 写入历史查询
   - 锁释放: release_write_lock
 """
-import os
 import hashlib
-import pytest
+import os
 import threading
 import time
 from pathlib import Path
 
-from teragent.security.file_state import FileStateTracker, FileReadRecord, FileWriteRecord
-
+from teragent.security.file_state import FileStateTracker
 
 # ===== 路径穿越防护 =====
 
@@ -83,7 +81,7 @@ class TestReadWriteContract:
 
     def test_write_without_read_succeeds(self, file_tracker, workspace):
         """未读取直接写入也成功（无读后写契约约束）"""
-        file_path = os.path.join(workspace, "new_file.py")
+        _file_path = os.path.join(workspace, "new_file.py")
         # 文件不存在时也可以写入
         allowed, reason = file_tracker.validate_write("new_file.py", writer_id="agent1")
         assert allowed is True

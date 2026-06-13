@@ -15,7 +15,7 @@
 
 import logging
 import re
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
@@ -459,7 +459,7 @@ class Microcompactor:
         # 4. 结构保留 — 检查标题层级
         original_headings = self._extract_headings(original)
         if original_headings:
-            compressed_headings = self._extract_headings(compressed)
+            _compressed_headings = self._extract_headings(compressed)
             # 检查原始标题中有多少出现在压缩后
             preserved_headings = sum(
                 1 for h in original_headings

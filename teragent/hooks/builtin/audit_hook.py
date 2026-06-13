@@ -17,7 +17,6 @@
 """
 import logging
 import time
-from typing import Awaitable, Callable
 
 from teragent.hooks.manager import (
     HookContext,

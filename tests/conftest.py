@@ -4,13 +4,14 @@
 公共 fixture 和配置
 """
 import asyncio
-import os
-import tempfile
 import logging
-import pytest
+import os
 
 # 确保项目根目录在 sys.path 中
 import sys
+
+import pytest
+
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -72,7 +73,7 @@ def event_bus():
 def enhanced_perm_manager():
     """创建带有默认规则的 EnhancedPermissionManager"""
     from teragent.security.permission import (
-        EnhancedPermissionManager, PermissionRule, PermissionEffect,
+        EnhancedPermissionManager,
     )
     mgr = EnhancedPermissionManager()
     for rule in EnhancedPermissionManager.default_rules():
@@ -94,7 +95,7 @@ def file_tracker(workspace):
 @pytest.fixture
 def budget_tracker():
     """创建 CostBudgetTracker 实例"""
-    from teragent.reliability.circuit_breaker import CostBudgetTracker, CostBudgetConfig
+    from teragent.reliability.circuit_breaker import CostBudgetConfig, CostBudgetTracker
     config = CostBudgetConfig(
         max_session_tokens=10_000,
         warning_threshold=0.7,

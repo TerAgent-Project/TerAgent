@@ -1,6 +1,6 @@
 # TerAgent 国产芯片部署指南 — Ascend 910B / 950PR
 
-> **适用版本：** TerAgent v0.0.1+  
+> **适用版本：** TerAgent v0.1.1+  
 > **目标模型：** GLM-5 / DeepSeek V4 / MiniMax M3  
 > **硬件平台：** 华为昇腾 Ascend 910B、Ascend 950PR  
 > **状态：** 部署指南 + 配置模板（实际硬件验证待后续执行）

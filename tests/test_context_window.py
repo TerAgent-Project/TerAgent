@@ -8,11 +8,9 @@
   - last_estimated_tokens 追踪
   - usage_ratio / summary
 """
-import pytest
 
 from teragent.context.context_window import ContextWindow
-from teragent.core.types import Message, MessageRole, MessageType
-
+from teragent.core.types import Message
 
 # ===== 辅助 =====
 

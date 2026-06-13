@@ -8,11 +8,11 @@
   - 消息顺序保留
   - 短内容直接返回
 """
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from teragent.context.microcompactor import Microcompactor
-
 
 # ===== 辅助 =====
 

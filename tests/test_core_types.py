@@ -11,18 +11,15 @@
   - 便捷属性: is_system / is_user / is_assistant / is_tool / has_tool_calls
   - messages_to_api_format / messages_from_dicts 批量转换
 """
-import pytest
-import time
+
 
 from teragent.core.types import (
     Message,
     MessageRole,
     MessageType,
-    ToolSafety,
-    messages_to_api_format,
     messages_from_dicts,
+    messages_to_api_format,
 )
-
 
 # ===== MessageRole 枚举 =====
 

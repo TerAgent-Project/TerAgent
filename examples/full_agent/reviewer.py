@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 
 from teragent.core.provider import ModelProvider
 from teragent.core.tap import TAPRequest
-
 from teragent.event_bus import EventBus
 
 logger = logging.getLogger(__name__)

@@ -13,20 +13,18 @@ Tests cover:
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from teragent.core.adapter import TAPAdapterRegistry
 from teragent.core.adapters.minimax_native import (
+    _DESKTOP_ENDPOINT,
+    MINIMAX_DEFAULT_BASE_URL,
     MiniMaxNativeAdapter,
     MiniMaxRateLimitInfo,
-    MINIMAX_DEFAULT_BASE_URL,
-    _DESKTOP_ENDPOINT,
 )
-from teragent.core.adapter import TAPAdapterRegistry
-from teragent.core.tap import CompiledPrompt, TAPResponse
-
+from teragent.core.tap import TAPResponse
 
 # ============================================================================
 # MiniMaxRateLimitInfo
@@ -288,7 +286,7 @@ class TestMiniMaxNativeAdapterDesktop:
     @pytest.mark.asyncio
     async def test_desktop_command_payload_structure(self):
         """Verify desktop command builds a correct payload structure."""
-        adapter = MiniMaxNativeAdapter(api_key="test-key", group_id="test-group")
+        _adapter = MiniMaxNativeAdapter(api_key="test-key", group_id="test-group")
         # Build the expected payload manually
         payload = {
             "model": "minimax-m3",

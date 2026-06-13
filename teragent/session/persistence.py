@@ -52,11 +52,9 @@ import json
 import logging
 import os
 import tempfile
-import time
 import threading
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+import time
+from dataclasses import dataclass
 
 from teragent.core.types import Message, MessageRole, MessageType
 

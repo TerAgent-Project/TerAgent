@@ -18,13 +18,12 @@ DeepSeek V4 专属编译器，支持：
 
 from __future__ import annotations
 
-import copy
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
+from teragent.context.profiles import ContextProfile, DeepSeekV4ContextProfile
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-from teragent.context.profiles import DeepSeekV4ContextProfile, ContextProfile
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +148,7 @@ class DeepSeekV4Compiler(TAPCompiler):
         compiled.extra["cache_aware"] = True
 
         # ---- 第一步：分类现有消息 ----
-        frozen_messages: list[dict] = []
+        _frozen_messages: list[dict] = []
         semi_static_messages: list[dict] = []
         dynamic_messages: list[dict] = []
 

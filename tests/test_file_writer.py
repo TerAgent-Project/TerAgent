@@ -8,22 +8,20 @@
   - _release_all_locks: 批量释放写入锁
   - _cleanup_backups: 清理备份文件
 """
-import os
-import pytest
-import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from teragent.security.file_writer import (
+    _cleanup_backups,
+    _release_all_locks,
     _sync_atomic_write,
     atomic_write_file,
     write_files_safely,
-    _release_all_locks,
-    _cleanup_backups,
 )
+from teragent.security.permission import PermissionLevel, PermissionManager
 from teragent.utils.exceptions import SandboxViolation
-from teragent.security.permission import PermissionManager, PermissionLevel
-
 
 # ===== _sync_atomic_write =====
 
@@ -104,8 +102,8 @@ class TestAtomicWriteFile:
         """EnhancedPermissionManager 拒绝写入"""
         from teragent.security.permission import (
             EnhancedPermissionManager,
-            PermissionRule,
             PermissionEffect,
+            PermissionRule,
         )
         epm = EnhancedPermissionManager(default_level=PermissionLevel.PLAN)
         epm.add_rule(PermissionRule(

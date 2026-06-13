@@ -26,21 +26,21 @@ Usage::
 from teragent.benchmark.benchmark import (
     # Core data classes
     BenchmarkMetric,
-    BenchmarkResult,
     BenchmarkReport,
-    # Individual benchmarks
-    CompilationBenchmark,
-    LatencyBenchmark,
-    ContextManagementBenchmark,
-    MultimodalBenchmark,
-    LongHorizonBenchmark,
-    CostEfficiencyBenchmark,
-    # Router benchmark
-    RouterBenchmark,
-    # Fault recovery benchmark
-    FaultRecoveryBenchmark,
+    BenchmarkResult,
     # Runner
     BenchmarkRunner,
+    # Individual benchmarks
+    CompilationBenchmark,
+    ContextManagementBenchmark,
+    CostEfficiencyBenchmark,
+    # Fault recovery benchmark
+    FaultRecoveryBenchmark,
+    LatencyBenchmark,
+    LongHorizonBenchmark,
+    MultimodalBenchmark,
+    # Router benchmark
+    RouterBenchmark,
 )
 
 __all__ = [

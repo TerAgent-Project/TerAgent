@@ -8,8 +8,8 @@
     2.  Markdown code blocks with filename hints
     3.  Fallback: infer filenames from code content
 """
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 

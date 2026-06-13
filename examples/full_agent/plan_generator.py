@@ -14,9 +14,8 @@ import logging
 
 from teragent.core.provider import ModelProvider
 from teragent.core.tap import TAPRequest
-from teragent.pipeline.retry import retry_with_backoff
-
 from teragent.event_bus import EventBus
+from teragent.pipeline.retry import retry_with_backoff
 from teragent.utils.text import strip_code_block
 
 logger = logging.getLogger(__name__)

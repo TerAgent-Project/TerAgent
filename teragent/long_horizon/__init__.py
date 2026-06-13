@@ -19,12 +19,12 @@
     )
 """
 
-from teragent.long_horizon.task_manager import LongHorizonTaskManager
 from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
-from teragent.long_horizon.progress import ProgressTracker, ProgressReport
-from teragent.long_horizon.types import SubGoal, PhaseResult, LongHorizonResult
-from teragent.long_horizon.self_evaluation import SelfEvaluator, SelfEvaluationResult
+from teragent.long_horizon.progress import ProgressReport, ProgressTracker
+from teragent.long_horizon.self_evaluation import SelfEvaluationResult, SelfEvaluator
 from teragent.long_horizon.strategy_switch import StrategySwitcher, StrategySwitchRecord
+from teragent.long_horizon.task_manager import LongHorizonTaskManager
+from teragent.long_horizon.types import LongHorizonResult, PhaseResult, SubGoal
 
 __all__ = [
     "LongHorizonTaskManager",

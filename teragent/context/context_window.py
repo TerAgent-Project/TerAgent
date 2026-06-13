@@ -13,10 +13,9 @@
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from teragent.core.types import Message
     from teragent.context.profiles import ContextProfile
 
 logger = logging.getLogger(__name__)

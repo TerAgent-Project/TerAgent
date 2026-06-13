@@ -19,13 +19,12 @@
 """
 import asyncio
 import logging
-from typing import Callable, Awaitable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
-from teragent.tools.base import BaseTool, ToolResult
 from teragent.core.types import ToolSafety
+from teragent.hooks.manager import HookContext, HookDecision, HookEvent, HookManager
+from teragent.tools.base import ToolResult
 from teragent.tools.registry import ToolRegistry
-
-from teragent.hooks.manager import HookManager, HookEvent, HookContext, HookDecision
 
 if TYPE_CHECKING:
     from teragent.security.permission import EnhancedPermissionManager

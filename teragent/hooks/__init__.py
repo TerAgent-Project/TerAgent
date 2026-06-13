@@ -34,14 +34,14 @@
         print(f"Blocked: {result.reason}")
 """
 from teragent.hooks.manager import (
-    HookEvent,
-    HookDecision,
-    HookContext,
-    HookResult,
     Hook,
-    ShellHook,
-    PythonHook,
+    HookContext,
+    HookDecision,
+    HookEvent,
     HookManager,
+    HookResult,
+    PythonHook,
+    ShellHook,
 )
 
 __all__ = [

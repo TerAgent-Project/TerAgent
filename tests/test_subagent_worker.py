@@ -6,16 +6,15 @@
   - 危险命令检测
   - 完整执行流程
 """
-import asyncio
 import tempfile
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from teragent.pipeline.subagent_worker import (
     SubAgentWorker,
     extract_commands_from_response,
     is_dangerous_command,
-    DANGEROUS_PATTERNS,
 )
 
 
@@ -133,9 +132,10 @@ class TestSubAgentWorkerExecute:
     @pytest.mark.asyncio
     async def test_execute_with_file_output(self):
         """模型返回文件内容时提取并写入"""
+        import tempfile
+
         from teragent.core.provider import ModelProvider
         from teragent.core.tap import TAPResponse
-        import tempfile
 
         mock_model = AsyncMock(spec=ModelProvider)
         response_text = '<file path="hello.py">print("hello")</file>'
@@ -160,9 +160,10 @@ class TestSubAgentWorkerExecute:
     @pytest.mark.asyncio
     async def test_execute_with_dangerous_command(self):
         """执行包含危险命令时返回权限拒绝"""
+        import tempfile
+
         from teragent.core.provider import ModelProvider
         from teragent.core.tap import TAPResponse
-        import tempfile
 
         mock_model = AsyncMock(spec=ModelProvider)
         response_text = '<command cwd=".">rm -rf /</command>'

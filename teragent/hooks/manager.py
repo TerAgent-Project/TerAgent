@@ -573,7 +573,6 @@ class HookManager:
                             func = getattr(module, func_name)
                             # Check if func is a factory that returns a Hook instance
                             # (e.g., create_audit_hook, create_dangerous_command_hook)
-                            from teragent.hooks.manager import Hook as _HookBase
                             try:
                                 result = func()
                                 if isinstance(result, Hook):

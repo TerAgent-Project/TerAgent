@@ -9,10 +9,11 @@
   - cancel_all 取消
 """
 import asyncio
+
 import pytest
 
-from teragent.intent.confirmation import ConfirmationGate
 from teragent.event_bus import EventBus
+from teragent.intent.confirmation import ConfirmationGate
 
 
 class TestM0AutoConfirm:

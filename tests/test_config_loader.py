@@ -3,19 +3,17 @@
 
 测试 TOML 加载、新旧格式、编译器推断、管道配置等。
 """
-import os
-import pytest
 
+
+from teragent.config.driver_config import DriverConfig
 from teragent.config.loader import (
-    load_driver_configs,
-    load_pipeline_config,
-    infer_compiler,
     _is_new_format,
     _parse_old_driver_name,
     get_driver_config,
+    infer_compiler,
+    load_driver_configs,
+    load_pipeline_config,
 )
-from teragent.config.driver_config import DriverConfig
-
 
 # ===== 编译器自动推断 =====
 

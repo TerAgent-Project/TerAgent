@@ -3,11 +3,9 @@
 
 测试 ToolResult、BaseTool 的安全级别、参数验证、注册格式等。
 """
-import pytest
 
-from teragent.tools.base import BaseTool, ToolResult
 from teragent.core.types import ToolSafety
-
+from teragent.tools.base import BaseTool, ToolResult
 
 # ===== 测试用具体工具 =====
 

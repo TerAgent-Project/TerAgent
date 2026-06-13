@@ -21,13 +21,11 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
-from teragent.event_bus import EventBus
-from teragent.core.provider import ModelProvider
+from teragent.coordination.message_bus import AgentMessage, AgentMessageBus
 from teragent.core.prompts import get_system_prompt_for_intent
-from teragent.coordination.message_bus import AgentMessageBus, AgentMessage
-
+from teragent.core.provider import ModelProvider
+from teragent.event_bus import EventBus
 from teragent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)

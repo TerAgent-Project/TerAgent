@@ -32,10 +32,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from teragent.event_bus import EventBus
-
 # Typed circuit breaker config support
 from teragent.config.circuit_breaker_config import CircuitBreakerConfig as TypedCircuitBreakerConfig
+from teragent.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -502,7 +501,7 @@ class ConsecutiveFailureBreaker:
             # Failed during half-open — go back to open
             self._state_name = "open"
             logger.warning(
-                f"Circuit breaker re-opened: retry failed during half_open"
+                "Circuit breaker re-opened: retry failed during half_open"
             )
             _safe_emit(
                 self._bus,

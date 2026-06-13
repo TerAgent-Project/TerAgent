@@ -5,8 +5,8 @@ GLM-specific compilation with recency effect optimization and Chinese constraint
 
 from __future__ import annotations
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 
 class GLMCompiler(TAPCompiler):

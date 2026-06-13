@@ -12,15 +12,16 @@
   - 不再依赖全局变量，可同时创建多个独立审计实例
 """
 
-import aiosqlite
 import asyncio
 import functools
 import logging
 import os
 import threading
 import time
-import warnings
 from typing import Any, Awaitable, Callable
+
+import aiosqlite
+
 from teragent.utils.tracing import get_request_id
 
 logger = logging.getLogger(__name__)

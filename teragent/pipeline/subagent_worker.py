@@ -18,20 +18,20 @@ import re
 import time
 from typing import TYPE_CHECKING
 
-from teragent.core.tap import TAPRequest
 from teragent.core.provider import ModelProvider
+from teragent.core.tap import TAPRequest
 from teragent.pipeline.extractor import extract_files_from_response
 
 # Security modules — migrated to teragent/security/
 from teragent.security.file_writer import write_files_safely
-from teragent.security.permission import PermissionManager, PermissionLevel
+from teragent.security.permission import PermissionLevel, PermissionManager
 from teragent.security.sandbox import execute_in_sandbox
 from teragent.utils.exceptions import SandboxViolation
 from teragent.utils.token_counter import estimate_tokens
 
 if TYPE_CHECKING:
-    from teragent.security.file_state import FileStateTracker
     from teragent.pipeline.tracing import TAPTracer
+    from teragent.security.file_state import FileStateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def is_dangerous_command(cmd: str) -> bool:
     Also returns True for WARNING level (package installs) since
     those require user approval in SubAgentWorker.
     """
-    from teragent.security.sandbox import classify_command_risk, CommandRiskLevel
+    from teragent.security.sandbox import CommandRiskLevel, classify_command_risk
     risk_level, _ = classify_command_risk(cmd)
     return risk_level in (CommandRiskLevel.DANGEROUS, CommandRiskLevel.CRITICAL, CommandRiskLevel.WARNING)
 
@@ -159,7 +159,7 @@ class SubAgentWorker:
         """
         # Determine tracing strategy
         tracer = self._get_tracer()
-        use_legacy_trace = tracer is None  # Fall back to legacy if no tracer
+        _use_legacy_trace = tracer is None  # Fall back to legacy if no tracer
 
         # --- Trace directory preparation (legacy fallback) ---
         trace_dir = os.path.join(self.workspace_root, ".agent", "traces")

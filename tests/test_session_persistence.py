@@ -6,17 +6,17 @@
 import json
 import os
 import time
+
 import pytest
 
+from teragent.core.types import Message, MessageRole, MessageType
 from teragent.session.persistence import (
-    SessionPersistence,
     SessionData,
     SessionInfo,
-    _message_to_dict,
+    SessionPersistence,
     _message_from_dict,
+    _message_to_dict,
 )
-from teragent.core.types import Message, MessageRole, MessageType
-
 
 # ===== 辅助 fixture =====
 
@@ -242,11 +242,11 @@ class TestEnforceMaxSessions:
             auto_save=True,
         )
         # 创建 3 个会话
-        s1 = p.create("第1个")
+        _s1 = p.create("第1个")
         time.sleep(0.01)
-        s2 = p.create("第2个")
+        _s2 = p.create("第2个")
         time.sleep(0.01)
-        s3 = p.create("第3个")  # 触发 enforce
+        _s3 = p.create("第3个")  # 触发 enforce
 
         # 最旧的 s1 应被删除
         # （_enforce_max_sessions 在 create 中被调用）

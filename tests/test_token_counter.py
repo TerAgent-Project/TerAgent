@@ -3,10 +3,8 @@
 
 测试 estimate_tokens 和 detect_content_type 函数。
 """
-import pytest
 
-from teragent.utils.token_counter import estimate_tokens, detect_content_type, _count_cjk
-
+from teragent.utils.token_counter import _count_cjk, detect_content_type, estimate_tokens
 
 # ===== Token 估算 =====
 

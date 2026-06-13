@@ -11,12 +11,10 @@
   - query: find_symbols/get_call_edges/get_external_calls
 """
 import asyncio
-import os
+
 import pytest
-from pathlib import Path
 
 from teragent.context.code_indexer import CodeIndexer
-
 
 # ===== 辅助 =====
 

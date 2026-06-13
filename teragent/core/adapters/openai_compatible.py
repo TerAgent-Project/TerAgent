@@ -14,8 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
 import httpx
 

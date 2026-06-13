@@ -54,7 +54,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import warnings
 from typing import Any
 
 # tomllib is stdlib in 3.11+; fall back to tomli (pip) for 3.10
@@ -66,13 +65,12 @@ else:
     except ImportError:
         tomllib = None  # type: ignore[assignment]
 
-from teragent.config.driver_config import DriverConfig
 from teragent.config.api_key_security import (
     ApiKeyVault,
     ResolvedKey,
     mask_api_key,
-    get_vault,
 )
+from teragent.config.driver_config import DriverConfig
 
 logger = logging.getLogger(__name__)
 

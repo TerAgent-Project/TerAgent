@@ -18,9 +18,9 @@ from __future__ import annotations
 import asyncio
 
 import teragent
-from teragent.router.model_router import ModelRouter, RoutingTable, PipelineProfile
+from teragent.core.tap import LongHorizonConfig, MultimodalContent, TAPRequest
 from teragent.reliability.budget import CrossModelCostTracker, MonthlyBudgetConfig
-from teragent.core.tap import TAPRequest, MultimodalContent, LongHorizonConfig
+from teragent.router.model_router import ModelRouter, PipelineProfile, RoutingTable
 
 
 async def demo_multi_model_compilation() -> None:

@@ -10,23 +10,20 @@
   - AIPermissionClassifier: 完整分类流程（缓存→LLM→启发式→置信度阈值→缓存写入）
   - 统计计数器
 """
-import json
 import time
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from teragent.security.ai_permission_classifier import (
     AIPermissionClassifier,
-    _HeuristicClassifier,
-    _ClassificationCache,
-    _CacheEntry,
-    _parse_llm_response,
     _build_classification_messages,
-    _CACHE_TTL_SECONDS,
-    _CACHE_MAX_SIZE,
+    _CacheEntry,
+    _ClassificationCache,
+    _HeuristicClassifier,
+    _parse_llm_response,
 )
 from teragent.security.permission import PermissionEffect
-
 
 # ===== _HeuristicClassifier =====
 

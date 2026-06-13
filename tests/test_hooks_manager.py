@@ -21,7 +21,6 @@ from teragent.hooks.manager import (
     ShellHook,
 )
 
-
 # ===== 辅助：构建 Python Hook =====
 
 def _make_hook(name: str, event: HookEvent, decision: HookDecision, reason: str = "",

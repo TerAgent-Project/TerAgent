@@ -7,8 +7,8 @@ effective when inlined directly into the user message.
 
 from __future__ import annotations
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 
 class DeepSeekCompiler(TAPCompiler):

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2025-07-09
+## [0.1.1] — 2025-07-13
 
 ### Added
 
@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All docstring examples updated from `compiler="glm"` to `compiler="glm_5"` for GLM-5
 - All `openai_compatible.glm` references updated to `openai_compatible.glm_5`
 - Version bumped from `0.0.1` (Alpha) to `0.1.0` (Beta)
+- Version bumped from `0.1.0` to `0.1.1` — ruff lint fixes, PEP 639 compliance, CI green
 - Development Status classifier from `3 - Alpha` to `4 - Beta`
 - Documentation compiler/adapter tables updated from 4×3 to 9×4
 

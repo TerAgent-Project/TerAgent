@@ -16,15 +16,13 @@
 import pytest
 
 from teragent.security.sandbox import (
-    check_command_safety,
+    _check_shell_metacharacters,
     _normalize_command,
     _split_command_chain,
-    _check_shell_metacharacters,
     _truncate_output,
-    BLOCKLIST_PATTERNS,
+    check_command_safety,
 )
 from teragent.utils.exceptions import SandboxViolation
-
 
 # ===== Layer 1: 命令规范化 =====
 

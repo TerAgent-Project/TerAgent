@@ -4,16 +4,21 @@
 测试 ToolOrchestrator 的分区策略、并行/串行执行、Hook 集成、权限检查等。
 """
 import asyncio
+
 import pytest
 
-from teragent.tools.orchestrator import ToolOrchestrator
-from teragent.tools.base import BaseTool, ToolResult
-from teragent.tools.registry import ToolRegistry
 from teragent.core.types import ToolSafety
 from teragent.hooks.manager import (
-    HookManager, HookEvent, HookDecision, HookContext, HookResult, PythonHook,
+    HookContext,
+    HookDecision,
+    HookEvent,
+    HookManager,
+    HookResult,
+    PythonHook,
 )
-
+from teragent.tools.base import BaseTool, ToolResult
+from teragent.tools.orchestrator import ToolOrchestrator
+from teragent.tools.registry import ToolRegistry
 
 # ===== 测试用工具 =====
 
@@ -354,7 +359,7 @@ class TestEnhancedPermissionIntegration:
     @pytest.mark.asyncio
     async def test_enhanced_perm_manager_deny(self, registry):
         """增强权限管理器拒绝时返回失败"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
 
         mock_perm = MagicMock()
         # 删除 acheck_tool_params 使编排器回退到同步方法
@@ -392,7 +397,7 @@ class TestEnhancedPermissionIntegration:
     @pytest.mark.asyncio
     async def test_enhanced_perm_manager_async_check(self, registry):
         """增强权限管理器异步检查方法"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
 
         mock_perm = MagicMock()
         mock_perm.acheck_tool_params = AsyncMock(return_value=(False, "异步拒绝"))

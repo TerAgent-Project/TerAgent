@@ -8,10 +8,8 @@
   - 重置 (reset)
   - remaining 属性
 """
-import pytest
 
-from teragent.reliability.budget import StepBudget, DEFAULT_MAX_STEPS
-
+from teragent.reliability.budget import StepBudget
 
 # ===== 步数消耗 =====
 

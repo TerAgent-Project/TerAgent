@@ -134,7 +134,7 @@ class DriverConfig:
         # Mask API key in repr for security
         masked_key = "***" if self.api_key else "(empty)"
         parts = [
-            f"DriverConfig(",
+            "DriverConfig(",
             f"full_name={self.full_name!r}, "
             f"adapter={self.adapter!r}, "
             f"identity={self.identity!r}, "

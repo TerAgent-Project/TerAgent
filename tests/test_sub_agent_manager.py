@@ -9,19 +9,19 @@
   - spawn/cancel 生命周期
 """
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from teragent.coordination.message_bus import AgentMessageBus
 from teragent.coordination.sub_agent_manager import (
     AgentMode,
-    SubAgentManager,
     SubAgentInfo,
+    SubAgentManager,
     SubAgentStatus,
     _detect_compiler_type,
 )
-from teragent.coordination.message_bus import AgentMessageBus, AgentMessage
 from teragent.event_bus import EventBus
-
 
 # ===== 辅助 fixture =====
 
@@ -190,7 +190,7 @@ class TestToolWhitelist:
     async def test_custom_tool_whitelist(self):
         """自定义工具白名单"""
         manager = _make_manager()
-        result = await manager.spawn(
+        _result = await manager.spawn(
             "受限任务",
             mode=AgentMode.SYNC,
             allowed_tools=["read_file"],
@@ -204,7 +204,7 @@ class TestToolWhitelist:
         """默认使用注册表中所有工具"""
         registry = _make_mock_tool_registry(["read_file", "write_file", "execute_subtask"])
         manager = _make_manager(tool_registry=registry)
-        result = await manager.spawn("任务", mode=AgentMode.SYNC)
+        _result = await manager.spawn("任务", mode=AgentMode.SYNC)
         agent_id = f"sub_agent_{manager._agent_counter}"
         status = manager.get_status(agent_id)
         assert len(status["allowed_tools"]) == 3

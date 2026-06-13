@@ -18,7 +18,6 @@ import os
 import pytest
 
 import teragent
-from teragent.config import DriverConfig
 
 # Skip entire module if not running live tests
 pytestmark = pytest.mark.live
@@ -217,7 +216,7 @@ class TestMultiModelLive:
         )
 
         # Compile with different compilers
-        from teragent.core.compilers import GLM5Compiler, DeepSeekV4Compiler, MiniMaxM3Compiler
+        from teragent.core.compilers import DeepSeekV4Compiler, GLM5Compiler, MiniMaxM3Compiler
 
         glm5 = GLM5Compiler().compile(request)
         v4 = DeepSeekV4Compiler().compile(request)

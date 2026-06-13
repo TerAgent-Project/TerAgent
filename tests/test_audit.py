@@ -8,10 +8,10 @@
   - 统计: get_audit_stats
 """
 import time
+
 import pytest
 
 from teragent.security.audit import AuditLogger
-
 
 # ===== 初始化与连接管理 =====
 

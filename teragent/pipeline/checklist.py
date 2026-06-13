@@ -281,7 +281,7 @@ def run_deterministic_checks(
     py_files = _scan_python_files(workspace_root)
 
     all_lines: list[str] = []
-    all_lines.append(f"# 代码审查报告\n")
+    all_lines.append("# 代码审查报告\n")
     all_lines.append(f"Python 文件: {len(py_files)} 个\n")
 
     # Task completion statistics
@@ -301,7 +301,7 @@ def run_deterministic_checks(
         all_lines.append(f"\n**警告**: {blocked} 个任务被权限拦截 (BLOCKED)，未执行。")
 
     # Check 1: Code quality
-    all_lines.append(f"\n## 1. 代码质量检查\n")
+    all_lines.append("\n## 1. 代码质量检查\n")
     quality_issues = check_code_quality(workspace_root, py_files)
     if quality_issues:
         for issue in quality_issues:
@@ -310,7 +310,7 @@ def run_deterministic_checks(
         all_lines.append("- [OK] 无 TODO/FIXME 标记，无空函数体或省略占位")
 
     # Check 2: Dependency management
-    all_lines.append(f"\n## 2. 依赖管理检查\n")
+    all_lines.append("\n## 2. 依赖管理检查\n")
     req_issues = check_requirements(workspace_root)
     if req_issues:
         for issue in req_issues:
@@ -319,7 +319,7 @@ def run_deterministic_checks(
         all_lines.append("- [OK] requirements.txt 存在且非空")
 
     # Check 3: Fallback files
-    all_lines.append(f"\n## 3. 文件提取检查\n")
+    all_lines.append("\n## 3. 文件提取检查\n")
     fallback_issues = check_fallback_files(workspace_root)
     if fallback_issues:
         for issue in fallback_issues:
@@ -328,7 +328,7 @@ def run_deterministic_checks(
         all_lines.append("- [OK] 无 fallback_output.py（所有文件名提取正确）")
 
     # Check 4: Task file exclusivity
-    all_lines.append(f"\n## 4. 任务文件排他性检查\n")
+    all_lines.append("\n## 4. 任务文件排他性检查\n")
     conflict_issues = check_file_conflicts(task_list)
     if conflict_issues:
         for issue in conflict_issues:
@@ -337,40 +337,40 @@ def run_deterministic_checks(
         all_lines.append("- [OK] 无文件排他冲突")
 
     # Check 5: Runnability (last because it may launch GUI)
-    all_lines.append(f"\n## 5. 可运行性验证\n")
+    all_lines.append("\n## 5. 可运行性验证\n")
     run_issues = check_runnable(workspace_root)
     for issue in run_issues:
         all_lines.append(f"- {issue}")
 
     # Summary
-    fail_count = sum(1 for l in all_lines if '[FAIL]' in l)
-    warn_count = sum(1 for l in all_lines if '[WARN]' in l)
-    ok_count = sum(1 for l in all_lines if '[OK]' in l)
+    fail_count = sum(1 for line in all_lines if '[FAIL]' in line)
+    warn_count = sum(1 for line in all_lines if '[WARN]' in line)
+    ok_count = sum(1 for line in all_lines if '[OK]' in line)
 
     has_critical_warn = any(
-        any(pat in l for pat in _CRITICAL_WARN_PATTERNS)
-        for l in all_lines if '[WARN]' in l
+        any(pat in line for pat in _CRITICAL_WARN_PATTERNS)
+        for line in all_lines if '[WARN]' in line
     )
 
     # Extract structured issues list for auto-repair
     issues_list: list[dict] = []
-    for l in all_lines:
+    for line in all_lines:
         issue_type = ""
-        if '[FAIL]' in l:
+        if '[FAIL]' in line:
             issue_type = "FAIL"
-        elif '[WARN]' in l and any(pat in l for pat in _CRITICAL_WARN_PATTERNS):
+        elif '[WARN]' in line and any(pat in line for pat in _CRITICAL_WARN_PATTERNS):
             issue_type = "CRITICAL_WARN"
         else:
             continue
 
         # Try to extract file path from line
-        file_match = re.match(r'-\s*\[(?:FAIL|WARN)\]\s*([^:]+)', l)
+        file_match = re.match(r'-\s*\[(?:FAIL|WARN)\]\s*([^:]+)', line)
         file_path = file_match.group(1).strip() if file_match else ""
         # Remove line number suffix
         file_path = re.sub(r':\d+$', '', file_path).strip()
 
         # Extract description (remove markers and file path prefix)
-        desc = l.lstrip('- ').strip()
+        desc = line.lstrip('- ').strip()
 
         issues_list.append({
             "type": issue_type,
@@ -379,9 +379,9 @@ def run_deterministic_checks(
         })
 
     # Take snapshot of FAIL lines BEFORE appending summary (which also contains [FAIL])
-    fail_lines_snapshot = [l for l in all_lines if '[FAIL]' in l]
+    fail_lines_snapshot = [line for line in all_lines if '[FAIL]' in line]
 
-    all_lines.append(f"\n## 总结\n")
+    all_lines.append("\n## 总结\n")
     if fail_count == 0 and not has_critical_warn and warn_count <= 3:
         all_lines.append(f"**通过** | [OK] {ok_count}  [WARN] {warn_count}  [FAIL] {fail_count}")
         if warn_count > 0:
@@ -394,8 +394,8 @@ def run_deterministic_checks(
         if fail_count > 0:
             all_lines.append("\n关键问题:")
             # Snapshot already taken before summary
-            for l in fail_lines_snapshot:
-                all_lines.append(f"  - {l.lstrip('- ')}")
+            for line in fail_lines_snapshot:
+                all_lines.append(f"  - {line.lstrip('- ')}")
         elif warn_count > 3:
             all_lines.append(f"\n警告项较多（{warn_count} 个），已触发自动修复。")
 

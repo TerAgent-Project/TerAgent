@@ -58,7 +58,7 @@ def merge_agent_md(project_root: str, section_title: str, content: str) -> bool:
     Returns:
         True on success, False on failure.
     """
-    file_path = os.path.join(project_root, "AGENT.md")
+    _file_path = os.path.join(project_root, "AGENT.md")
     try:
         existing = load_agent_md(project_root)
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

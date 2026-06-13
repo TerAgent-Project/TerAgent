@@ -36,19 +36,19 @@ else:
     except ImportError:
         tomllib = None  # type: ignore[assignment]
 
-from teragent.config.driver_config import DriverConfig
 from teragent.config.circuit_breaker_config import CircuitBreakerConfig
 from teragent.config.context_management_config import ContextManagementConfig
-from teragent.config.tools_config import ToolsConfig
-from teragent.config.file_safety_config import FileSafetyConfig
-from teragent.config.session_config import SessionConfig
-from teragent.config.permission_config import PermissionConfig
-from teragent.config.hooks_config import HooksConfig
-from teragent.config.recovery_config import RecoveryConfig
-from teragent.config.streaming_config import StreamingConfig
 from teragent.config.coordination_config import CoordinationConfig
+from teragent.config.driver_config import DriverConfig
 from teragent.config.execution_pipeline_config import ExecutionPipelineConfig
+from teragent.config.file_safety_config import FileSafetyConfig
+from teragent.config.hooks_config import HooksConfig
 from teragent.config.model_fallback_config import ModelFallbackConfig
+from teragent.config.permission_config import PermissionConfig
+from teragent.config.recovery_config import RecoveryConfig
+from teragent.config.session_config import SessionConfig
+from teragent.config.streaming_config import StreamingConfig
+from teragent.config.tools_config import ToolsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,9 @@ class TerAgentConfig:
         Returns:
             Typed TerAgentConfig instance
         """
-        from teragent.config.loader import load_driver_configs  # noqa: delayed import to avoid circular dep with loader.load_typed_config
+        from teragent.config.loader import (
+            load_driver_configs,  # noqa: E402 — delayed import to avoid circular dep with loader.load_typed_config
+        )
 
         # Load driver configs
         drivers = load_driver_configs(raw)
@@ -213,7 +215,6 @@ class TerAgentConfig:
         Returns:
             Typed TerAgentConfig instance
         """
-        import os
 
         if tomllib is None:
             raise ImportError(
@@ -281,8 +282,8 @@ class TerAgentConfig:
             List of security warning strings
         """
         from teragent.config.api_key_security import (
-            audit_config_security,
             SecuritySeverity,
+            audit_config_security,
         )
 
         security_warnings: list[str] = []

@@ -11,12 +11,8 @@ All tests use MockAdapter — no real API calls.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import math
-import random
 import statistics
-import time
 
 import pytest
 
@@ -24,50 +20,46 @@ import pytest
 # P4-1: Benchmark Framework imports
 # ---------------------------------------------------------------------------
 from teragent.benchmark.benchmark import (
-    BenchmarkMetric,
-    BenchmarkResult,
-    BenchmarkReport,
-    BaseBenchmark,
-    CompilationBenchmark,
-    LatencyBenchmark,
-    ContextManagementBenchmark,
-    MultimodalBenchmark,
-    LongHorizonBenchmark,
-    CostEfficiencyBenchmark,
-    RouterBenchmark,
-    FaultRecoveryBenchmark,
-    BenchmarkRunner,
-    make_tap_request,
     ALL_COMPILERS,
-    THREE_MODEL_COMPILERS,
-    INTENTS,
+    BenchmarkMetric,
+    BenchmarkReport,
+    BenchmarkResult,
+    BenchmarkRunner,
+    CompilationBenchmark,
+    make_tap_request,
 )
+from teragent.core.compiler import TAPCompilerRegistry
 
 # ---------------------------------------------------------------------------
 # P4-2: Prompt tuning imports
 # ---------------------------------------------------------------------------
 from teragent.core.prompts import (
-    get_system_prompt_for_intent,
-    list_intents,
-    list_compiler_types,
-    # V4 execute prompt
-    EXECUTE_PROMPT_DEEPSEEK_V4,
-    # V4 design prompt
-    DESIGN_PROMPT_DEEPSEEK_V4,
-    # V4 review prompt
-    REVIEW_PROMPT_DEEPSEEK_V4,
-    # M3 execute prompt
-    EXECUTE_PROMPT_MINIMAX_M3,
-    # M3 agent prompt
-    AGENT_PROMPT_MINIMAX_M3,
-    # M3 sub_agent prompt
-    SUB_AGENT_PROMPT_MINIMAX_M3,
-    # M3 plan prompt
-    PLAN_PROMPT_MINIMAX_M3,
     # GLM-5 agent prompt
     AGENT_PROMPT_GLM_5,
+    # M3 agent prompt
+    AGENT_PROMPT_MINIMAX_M3,
     # CUDA/Triton
     CUDA_TRITON_PROMPT_GLM_5,
+    # V4 design prompt
+    DESIGN_PROMPT_DEEPSEEK_V4,
+    # V4 execute prompt
+    EXECUTE_PROMPT_DEEPSEEK_V4,
+    # M3 execute prompt
+    EXECUTE_PROMPT_MINIMAX_M3,
+    # M3 plan prompt
+    PLAN_PROMPT_MINIMAX_M3,
+    # V4 review prompt
+    REVIEW_PROMPT_DEEPSEEK_V4,
+    # M3 sub_agent prompt
+    SUB_AGENT_PROMPT_MINIMAX_M3,
+    get_system_prompt_for_intent,
+)
+
+# ---------------------------------------------------------------------------
+# Core imports for end-to-end tests
+# ---------------------------------------------------------------------------
+from teragent.core.tap import (
+    TAPRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,24 +73,9 @@ from teragent.reliability.circuit_breaker import (
 from teragent.reliability.recovery import (
     DegradationChain,
     LongHorizonRecoveryManager,
-    RateLimitInfo,
     RateLimitHandler,
+    RateLimitInfo,
 )
-
-# ---------------------------------------------------------------------------
-# Core imports for end-to-end tests
-# ---------------------------------------------------------------------------
-from teragent.core.tap import (
-    TAPRequest,
-    TAPResponse,
-    CompiledPrompt,
-    MultimodalContent,
-    DesktopContext,
-    LongHorizonConfig,
-)
-from teragent.core.compiler import TAPCompilerRegistry
-from teragent.core.adapters.mock import MockAdapter
-
 
 # ===========================================================================
 # P4-1: Benchmark Framework
@@ -420,7 +397,7 @@ class TestP4_3_ModelCircuitBreaker:
         """record_failure() returns fallback model name when breaker just opens."""
         mgr = ModelCircuitBreakerManager()
         for i in range(5):
-            result = mgr.record_failure("deepseek_v4_pro", f"err{i}")
+            _result = mgr.record_failure("deepseek_v4_pro", f"err{i}")
 
         # After 5 failures, the 5th record_failure should have returned a fallback
         assert mgr.get_state("deepseek_v4_pro") == "open"
@@ -866,13 +843,13 @@ class TestP4_3_RecoveryExport:
     def test_all_new_classes_importable_from_reliability(self):
         """All P4-3 classes are importable from teragent.reliability."""
         from teragent.reliability import (
+            DegradationChain,
+            LongHorizonRecoveryManager,
             ModelBreakerConfig,
             ModelBreakerState,
             ModelCircuitBreakerManager,
-            DegradationChain,
-            LongHorizonRecoveryManager,
-            RateLimitInfo,
             RateLimitHandler,
+            RateLimitInfo,
         )
         assert ModelBreakerConfig is not None
         assert ModelBreakerState is not None
@@ -909,8 +886,8 @@ class TestP4_3_RecoveryExport:
         from teragent.reliability.recovery import (
             DegradationChain,
             LongHorizonRecoveryManager,
-            RateLimitInfo,
             RateLimitHandler,
+            RateLimitInfo,
         )
         assert DegradationChain is not None
         assert LongHorizonRecoveryManager is not None
@@ -1021,7 +998,7 @@ class TestP4_EndToEnd:
 
     def test_cross_model_cost_tracking_with_fault_recovery(self):
         """Cross-model cost tracking works alongside fault recovery."""
-        from teragent.reliability.budget import CrossModelCostTracker, CostRecord
+        from teragent.reliability.budget import CostRecord, CrossModelCostTracker
 
         tracker = CrossModelCostTracker()
         mgr = ModelCircuitBreakerManager()
@@ -1101,7 +1078,7 @@ class TestP4_EndToEnd:
 
     def test_long_horizon_recovery_with_cost_tracking(self):
         """Long-horizon recovery integrates with cost tracking."""
-        from teragent.reliability.budget import CrossModelCostTracker, CostRecord
+        from teragent.reliability.budget import CostRecord, CrossModelCostTracker
 
         tracker = CrossModelCostTracker()
         recovery_mgr = LongHorizonRecoveryManager(max_reconnection_attempts=5)

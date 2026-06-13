@@ -30,4 +30,4 @@
 
 - **项目**: [GitHub](https://github.com/teragent/teragent)
 - **许可证**: Apache License Version 2.0
-- **版本**: 0.0.1
+- **版本**: 0.1.1

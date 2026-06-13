@@ -3,12 +3,10 @@
 
 测试 ToolRegistry 的注册/注销、安全元数据查询、invalidate_metadata 等。
 """
-import pytest
 
-from teragent.tools.registry import ToolRegistry
-from teragent.tools.base import BaseTool, ToolResult
 from teragent.core.types import ToolSafety
-
+from teragent.tools.base import BaseTool, ToolResult
+from teragent.tools.registry import ToolRegistry
 
 # ===== 测试用工具 =====
 

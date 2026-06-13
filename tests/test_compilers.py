@@ -12,13 +12,12 @@
 """
 import pytest
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-from teragent.core.compilers.glm import GLMCompiler
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.compilers.anthropic import AnthropicCompiler
 from teragent.core.compilers.deepseek import DeepSeekCompiler
 from teragent.core.compilers.default import DefaultCompiler
-
+from teragent.core.compilers.glm import GLMCompiler
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 # ===== 辅助: 构造 TAPRequest =====
 

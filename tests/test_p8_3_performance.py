@@ -10,29 +10,24 @@ All tests use mocks/stubs -- no live LLM API required.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import unittest
-import pytest
-from collections import defaultdict
-from typing import Any, AsyncIterator, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import AsyncIterator
+from unittest.mock import MagicMock
 
+from teragent.agent_loop import AgentLoop
+from teragent.config.agent_loop_config import AgentLoopConfig
+from teragent.core.types import ToolSafety
 from teragent.streaming.stream_events import (
     AnthropicStreamParser,
     OpenAIStreamParser,
     StreamEvent,
     StreamEventType,
-    StreamingChatResult,
     ToolCallAccumulator,
 )
-from teragent.tools.base import BaseTool, ToolResult
-from teragent.core.types import ToolSafety
-from teragent.tools.registry import ToolRegistry
 from teragent.streaming.streaming_executor import StreamingExecutionStats, StreamingToolExecutor
-from teragent.agent_loop import AgentLoop
-from teragent.config.agent_loop_config import AgentLoopConfig
-
+from teragent.tools.base import BaseTool, ToolResult
+from teragent.tools.registry import ToolRegistry
 
 # ======================================================================
 # Helper: Mock tool implementations

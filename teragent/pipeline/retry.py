@@ -17,7 +17,7 @@ Usage:
 """
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 

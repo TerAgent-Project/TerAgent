@@ -9,18 +9,17 @@
   - EnhancedPermissionManager: 规则匹配/优先级/排序缓存/配置加载/AI分类器
   - check_tool_params: 参数路径提取
 """
+
 import pytest
-import time
 
 from teragent.security.permission import (
+    EnhancedPermissionManager,
+    PermissionEffect,
     PermissionLevel,
     PermissionManager,
-    PermissionEffect,
     PermissionRule,
-    EnhancedPermissionManager,
 )
 from teragent.utils.exceptions import PermissionDenied
-
 
 # ===== PermissionLevel =====
 
@@ -202,7 +201,7 @@ class TestEnhancedPermissionManager:
 
     def test_no_rules_default_deny(self):
         """无规则时默认策略拒绝（DEFAULT级别下）
-        
+
         注意：M2修复后，PLAN级别允许SAFE_WRITE操作。
         此测试使用DEFAULT级别（0）验证无规则时的默认拒绝行为。
         """

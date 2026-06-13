@@ -26,28 +26,29 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger(__name__)
-
 # Core components — no optional dependencies
+from teragent.context.auto_compact import AutoCompactor
 from teragent.context.context_window import ContextWindow
+from teragent.context.memory import (
+    extract_rules,
+    load_agent_md,
+    merge_agent_md,
+    save_agent_md,
+)
+from teragent.context.microcompactor import Microcompactor
 from teragent.context.profiles import (
     ContextProfile,
     DeepSeekV4ContextProfile,
-    GLM5ContextProfile,
     GLM5CompactionStrategy,
+    GLM5ContextProfile,
     MiniMaxM3ContextProfile,
-)
-from teragent.context.microcompactor import Microcompactor
-from teragent.context.auto_compact import AutoCompactor
-from teragent.context.memory import (
-    load_agent_md,
-    save_agent_md,
-    merge_agent_md,
-    extract_rules,
 )
 
 # DependencyReporter requires CodeIndexer + ReferenceGraph (optional deps),
 # so it must be lazy-loaded too.
+logger = logging.getLogger(__name__)
+
+
 def __getattr__(name: str):
     """Lazy-load optional components that require extra dependencies.
 

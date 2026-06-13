@@ -8,13 +8,13 @@
   - ModelProvider: execute_tap / stream_tap / chat
   - 成本追踪: CostTracker 线程安全
 """
-import pytest
-import asyncio
 
-from teragent.core.tap import TAPRequest, TAPResponse
+import pytest
+
 from teragent.core.adapters.mock import MockAdapter
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.provider import ModelProvider
+from teragent.core.tap import TAPRequest, TAPResponse
 
 
 def _make_mock_provider(delay: float = 0.01, fail_rate: float = 0.0) -> ModelProvider:

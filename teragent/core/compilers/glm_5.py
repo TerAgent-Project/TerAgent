@@ -14,11 +14,10 @@ GLM-5 专属编译器，支持：
 from __future__ import annotations
 
 import logging
-from typing import Literal, Optional
 
-from teragent.core.tap import TAPRequest, CompiledPrompt
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
 from teragent.context.profiles import GLM5CompactionStrategy
+from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+from teragent.core.tap import CompiledPrompt, TAPRequest
 
 logger = logging.getLogger(__name__)
 

@@ -8,20 +8,14 @@
   - ProgressDetector: 进度检测/停滞评分/停滞警告
   - CircuitBreakerManager: 统一管理/record_model_call/状态报告
 """
-import pytest
 import time
 
 from teragent.reliability.circuit_breaker import (
-    CostBudgetTracker,
     CostBudgetConfig,
-    ConsecutiveFailureBreaker,
+    CostBudgetTracker,
     LatencyBreaker,
     ProgressDetector,
-    CircuitBreakerManager,
-    BudgetCheckResult,
-    BreakerState,
 )
-
 
 # ===== CostBudgetTracker =====
 

@@ -7,23 +7,19 @@
 """
 import pytest
 
-from teragent.hooks.manager import (
-    HookContext,
-    HookDecision,
-    HookEvent,
-    HookResult,
-)
-from teragent.hooks.builtin.dangerous_command_hook import (
-    DangerousCommandHook,
-    create_dangerous_command_hook,
-    DEFAULT_DANGEROUS_PATTERNS,
-    WARNING_PATTERNS,
-)
 from teragent.hooks.builtin.audit_hook import (
     AuditHook,
     create_audit_hook,
 )
-
+from teragent.hooks.builtin.dangerous_command_hook import (
+    DangerousCommandHook,
+    create_dangerous_command_hook,
+)
+from teragent.hooks.manager import (
+    HookContext,
+    HookDecision,
+    HookEvent,
+)
 
 # ===== DangerousCommandHook 测试 =====
 

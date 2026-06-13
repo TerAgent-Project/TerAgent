@@ -42,18 +42,17 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Optional
 
+from teragent.core.types import ToolSafety
 from teragent.streaming.stream_events import (
-    StreamEvent,
     StreamEventType,
     StreamingChatResult,
 )
-from teragent.core.types import ToolSafety
-from teragent.tools.base import BaseTool, ToolResult
-from teragent.tools.registry import ToolRegistry
+from teragent.tools.base import ToolResult
 from teragent.tools.orchestrator import ToolOrchestrator
+from teragent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

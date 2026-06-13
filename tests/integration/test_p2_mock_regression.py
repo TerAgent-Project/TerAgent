@@ -16,61 +16,51 @@ Test Coverage:
   9. P2 End-to-End (full pipeline tests across models)
 """
 
-import asyncio
-import json
-import os
 import shutil
 import tempfile
 import time
 
 import pytest
 
-from teragent.core.tap import (
-    TAPRequest,
-    TAPResponse,
-    CompiledPrompt,
-    TAPCostRecord,
-    CostTracker,
-    MultimodalContent,
-    DesktopContext,
-    LongHorizonConfig,
-    LongHorizonStatus,
+from teragent.context.context_window import ContextWindow
+from teragent.context.microcompactor import Microcompactor
+from teragent.context.profiles import (
+    DeepSeekV4ContextProfile,
+    GLM5CompactionStrategy,
+    GLM5ContextProfile,
+    MiniMaxM3ContextProfile,
 )
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-from teragent.core.adapter import TAPAdapter, TAPAdapterRegistry
+from teragent.core.adapter import TAPAdapterRegistry
+from teragent.core.adapters.minimax_native import MiniMaxNativeAdapter
+from teragent.core.adapters.mock import MockAdapter
+from teragent.core.adapters.openai_compatible import OpenAICompatibleAdapter
+from teragent.core.compiler import TAPCompilerRegistry
 from teragent.core.compilers import (
-    DefaultCompiler,
-    GLMCompiler,
-    AnthropicCompiler,
-    DeepSeekCompiler,
     DeepSeekV4Compiler,
     GLM5Compiler,
     MiniMaxM3Compiler,
 )
-from teragent.core.adapters.mock import MockAdapter
-from teragent.core.adapters.minimax_native import MiniMaxNativeAdapter
-from teragent.core.adapters.openai_compatible import OpenAICompatibleAdapter
 from teragent.core.provider import ModelProvider
-from teragent.context.profiles import (
-    ContextProfile,
-    DeepSeekV4ContextProfile,
-    GLM5ContextProfile,
-    MiniMaxM3ContextProfile,
-    GLM5CompactionStrategy,
+from teragent.core.tap import (
+    CompiledPrompt,
+    CostTracker,
+    DesktopContext,
+    LongHorizonConfig,
+    MultimodalContent,
+    TAPCostRecord,
+    TAPRequest,
+    TAPResponse,
 )
-from teragent.context.context_window import ContextWindow
-from teragent.context.microcompactor import Microcompactor
-from teragent.tools.desktop import DesktopTool, DesktopSafetyConfig
-from teragent.tools.registry import ToolRegistry
-from teragent.tools.base import ToolResult
 from teragent.core.types import ToolSafety
-from teragent.long_horizon.types import SubGoal, PhaseResult, LongHorizonResult
 from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
-from teragent.long_horizon.progress import ProgressTracker, ProgressReport
-from teragent.long_horizon.self_evaluation import SelfEvaluator, SelfEvaluationResult
+from teragent.long_horizon.progress import ProgressReport, ProgressTracker
+from teragent.long_horizon.self_evaluation import SelfEvaluationResult, SelfEvaluator
 from teragent.long_horizon.strategy_switch import StrategySwitcher, StrategySwitchRecord
 from teragent.long_horizon.task_manager import LongHorizonTaskManager
-
+from teragent.long_horizon.types import LongHorizonResult, PhaseResult, SubGoal
+from teragent.tools.base import ToolResult
+from teragent.tools.desktop import DesktopSafetyConfig, DesktopTool
+from teragent.tools.registry import ToolRegistry
 
 # ===== Helpers =====
 

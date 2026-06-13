@@ -18,14 +18,14 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from teragent.core.tap import LongHorizonConfig, LongHorizonStatus, TAPRequest
+from teragent.core.tap import LongHorizonConfig
 from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
-from teragent.long_horizon.progress import ProgressTracker, ProgressReport
-from teragent.long_horizon.types import SubGoal, PhaseResult, LongHorizonResult
-from teragent.long_horizon.self_evaluation import SelfEvaluator, SelfEvaluationResult
-from teragent.long_horizon.strategy_switch import StrategySwitcher, StrategySwitchRecord
+from teragent.long_horizon.progress import ProgressReport, ProgressTracker
+from teragent.long_horizon.self_evaluation import SelfEvaluator
+from teragent.long_horizon.strategy_switch import StrategySwitcher
+from teragent.long_horizon.types import LongHorizonResult, PhaseResult, SubGoal
 
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
@@ -157,7 +157,7 @@ class LongHorizonTaskManager:
             f"goal={self.goal[:100]}..."
         )
 
-        start_time = __import__("time").monotonic()
+        _start_time = __import__("time").monotonic()
 
         try:
             # 1. 分解目标
@@ -238,7 +238,7 @@ class LongHorizonTaskManager:
 
                 # 评估进度
                 self.progress_tracker.set_phase("evaluating")
-                evaluation = await self.evaluate_progress()
+                _evaluation = await self.evaluate_progress()
 
                 # 自评估检查（如果启用了自评估）
                 should_switch = False

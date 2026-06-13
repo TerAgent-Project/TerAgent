@@ -15,16 +15,15 @@
   - __del__ 方法行为
   - base_url 尾部斜杠去除
 """
-import pytest
 import httpx
+import pytest
 
 from teragent.core.adapters.openai_compatible import (
-    OpenAICompatibleAdapter,
-    FAKE_TOOLS,
     FAKE_TOOL_NAMES,
+    FAKE_TOOLS,
+    OpenAICompatibleAdapter,
     detect_fake_tool_call,
 )
-
 
 # ===== __init__ 参数存储 =====
 

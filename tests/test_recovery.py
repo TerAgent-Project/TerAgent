@@ -9,19 +9,16 @@
   - 恢复统计追踪
   - RecoveryManagerConfig
 """
-import pytest
-import time
 from unittest.mock import MagicMock
 
 from teragent.reliability.recovery import (
-    RecoveryType,
-    RecoveryStats,
-    RecoveryManagerConfig,
     RecoveryManager,
+    RecoveryManagerConfig,
+    RecoveryStats,
+    RecoveryType,
     is_context_overflow_error,
     is_retryable_error,
 )
-
 
 # ===== RecoveryType 枚举 =====
 

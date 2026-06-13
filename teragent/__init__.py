@@ -88,128 +88,345 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+# Prompt templates
+import teragent.core.adapters  # noqa: F401 — registers: openai_compatible, anthropic_native, minimax_native, mock
 
 # ============================================================================
-# Core data types
+# Trigger compiler/adapter registration
 # ============================================================================
-
-from teragent.core.tap import (
-    TAPRequest, TAPResponse, TAPCostRecord, CompiledPrompt,
-    MultimodalContent, DesktopContext, LongHorizonConfig, LongHorizonStatus,
-    CostTracker,
-)
-
-# Compiler ABC + Registry
-from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
-
-# Adapter ABC + Registry
-from teragent.core.adapter import TAPAdapter, TAPAdapterRegistry
-
-# Compiler implementations (triggers registration)
-from teragent.core.compilers import (
-    DefaultCompiler, GLMCompiler, AnthropicCompiler, DeepSeekCompiler,
-    DeepSeekV4Compiler, GLM5Compiler, MiniMaxM3Compiler,
-)
-
-# ModelProvider (Compiler + Adapter composition)
-from teragent.core.provider import ModelProvider
-
-# Core types
-from teragent.core.types import ToolSafety
-from teragent.core.types import Message, MessageRole, MessageType, messages_to_api_format, messages_from_dicts
+import teragent.core.compilers  # noqa: F401 — registers: default, glm, anthropic, deepseek, deepseek_v4, deepseek_v4_flash, deepseek_v4_pro, glm_5, minimax_m3
 
 # ============================================================================
-# Config layer
+# AgentLoop — central orchestration class
 # ============================================================================
-
-from teragent.config.driver_config import DriverConfig
-from teragent.config.loader import (
-    load_driver_configs,
-    load_pipeline_config,
-    load_full_config,
-    create_provider_from_config,
-    get_driver_config,
-    resolve_api_key,
-    resolve_api_key_detailed,
-    infer_compiler,
-    load_typed_config,
-    audit_config_security,
-)
+from teragent.agent_loop import AgentLoop
+from teragent.config.agent_loop_config import AgentLoopConfig
 
 # API Key security
 from teragent.config.api_key_security import (
     ApiKeyVault,
     ResolvedKey,
+    SecurityError,
     SecurityFinding,
     SecuritySeverity,
-    SecurityError,
-    mask_api_key,
-    detect_api_key_provider,
-    audit_config_security as audit_api_key_security,
     audit_env_file,
+    detect_api_key_provider,
     get_vault,
+    mask_api_key,
 )
-
-# Typed configuration dataclasses
-from teragent.config.teragent_config import TerAgentConfig, AgentdSectionConfig
-from teragent.config.agent_loop_config import AgentLoopConfig
+from teragent.config.api_key_security import (
+    audit_config_security as audit_api_key_security,
+)
 from teragent.config.circuit_breaker_config import (
-    CircuitBreakerConfig,
     BudgetConfig,
+    CircuitBreakerConfig,
     FailureBreakerConfig,
     LatencyBreakerConfig,
     ProgressDetectorConfig,
 )
 from teragent.config.context_management_config import ContextManagementConfig
-from teragent.config.tools_config import ToolsConfig
-from teragent.config.file_safety_config import FileSafetyConfig
-from teragent.config.session_config import SessionConfig
-from teragent.config.permission_config import PermissionConfig
-from teragent.config.hooks_config import HooksConfig
-from teragent.config.recovery_config import RecoveryConfig
-from teragent.config.streaming_config import StreamingConfig
 from teragent.config.coordination_config import CoordinationConfig
+
+# ============================================================================
+# Config layer
+# ============================================================================
+from teragent.config.driver_config import DriverConfig
 from teragent.config.execution_pipeline_config import ExecutionPipelineConfig
+from teragent.config.file_safety_config import FileSafetyConfig
+from teragent.config.hooks_config import HooksConfig
+from teragent.config.loader import (
+    audit_config_security,
+    create_provider_from_config,
+    get_driver_config,
+    infer_compiler,
+    load_driver_configs,
+    load_full_config,
+    load_pipeline_config,
+    load_typed_config,
+    resolve_api_key,
+    resolve_api_key_detailed,
+)
 from teragent.config.model_fallback_config import ModelFallbackConfig
+from teragent.config.permission_config import PermissionConfig
+from teragent.config.recovery_config import RecoveryConfig
+from teragent.config.session_config import SessionConfig
+from teragent.config.streaming_config import StreamingConfig
+
+# Typed configuration dataclasses
+from teragent.config.teragent_config import AgentdSectionConfig, TerAgentConfig
+from teragent.config.tools_config import ToolsConfig
+from teragent.context.auto_compact import AutoCompactor
 
 # ============================================================================
-# Pipeline primitives
+# Context management — core components always available
 # ============================================================================
-
-from teragent.pipeline.extractor import extract_files_from_response
-from teragent.pipeline.prompt_builder import (
-    build_prompt,
-    build_subagent_prompt,
-    validate_prompt_tokens,
-    DEFAULT_SYSTEM_TEMPLATE,
+from teragent.context.context_window import ContextWindow
+from teragent.context.memory import (
+    extract_rules,
+    load_agent_md,
+    merge_agent_md,
+    save_agent_md,
 )
-from teragent.pipeline.checklist import (
-    run_deterministic_checks,
-    TaskInfo,
-    check_code_quality,
-    check_requirements,
-    check_runnable,
-    check_file_conflicts,
-    check_fallback_files,
-)
-from teragent.pipeline.retry import retry_with_backoff
+from teragent.context.microcompactor import Microcompactor
 
-# TAP Tracing + DPO pair generation
-from teragent.pipeline.tracing import (
-    TAPTracer,
-    TraceRecord,
-    DPOPair,
-    DataConstitution,
-    TraceStats,
+# ============================================================================
+# Coordination
+# ============================================================================
+from teragent.coordination.message_bus import AgentMessage, AgentMessageBus
+from teragent.coordination.sub_agent_manager import (
+    AgentMode,
+    SubAgentInfo,
+    SubAgentManager,
+    SubAgentStatus,
+)
+
+# Adapter ABC + Registry
+from teragent.core.adapter import TAPAdapter, TAPAdapterRegistry
+
+# Compiler ABC + Registry
+from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
+
+# Compiler implementations (triggers registration)
+from teragent.core.compilers import (
+    AnthropicCompiler,
+    DeepSeekCompiler,
+    DeepSeekV4Compiler,
+    DefaultCompiler,
+    GLM5Compiler,
+    GLMCompiler,
+    MiniMaxM3Compiler,
+)
+from teragent.core.prompts import (
+    AGENT_PROMPT_ANTHROPIC,
+    AGENT_PROMPT_DEEPSEEK,
+    AGENT_PROMPT_DEEPSEEK_V4,
+    AGENT_PROMPT_DEFAULT,
+    AGENT_PROMPT_GLM,
+    AGENT_PROMPT_GLM_5,
+    AGENT_PROMPT_MINIMAX_M3,
+    CHAT_PROMPT_ANTHROPIC,
+    CHAT_PROMPT_DEEPSEEK,
+    CHAT_PROMPT_DEEPSEEK_V4,
+    CHAT_PROMPT_DEFAULT,
+    CHAT_PROMPT_GLM,
+    CHAT_PROMPT_GLM_5,
+    CHAT_PROMPT_MINIMAX_M3,
+    CUDA_TRITON_PROMPT_GLM_5,
+    DESIGN_PROMPT_ANTHROPIC,
+    DESIGN_PROMPT_DEEPSEEK,
+    DESIGN_PROMPT_DEEPSEEK_V4,
+    DESIGN_PROMPT_DEFAULT,
+    DESIGN_PROMPT_GLM,
+    DESIGN_PROMPT_GLM_5,
+    DESIGN_PROMPT_MINIMAX_M3,
+    EXECUTE_PROMPT_ANTHROPIC,
+    EXECUTE_PROMPT_DEEPSEEK,
+    EXECUTE_PROMPT_DEEPSEEK_V4,
+    EXECUTE_PROMPT_DEFAULT,
+    EXECUTE_PROMPT_GLM,
+    EXECUTE_PROMPT_GLM_5,
+    EXECUTE_PROMPT_MINIMAX_M3,
+    PLAN_PROMPT_ANTHROPIC,
+    PLAN_PROMPT_DEEPSEEK,
+    PLAN_PROMPT_DEEPSEEK_V4,
+    PLAN_PROMPT_DEFAULT,
+    PLAN_PROMPT_GLM,
+    PLAN_PROMPT_GLM_5,
+    PLAN_PROMPT_MINIMAX_M3,
+    REPLAN_PROMPT_ANTHROPIC,
+    REPLAN_PROMPT_DEEPSEEK,
+    REPLAN_PROMPT_DEEPSEEK_V4,
+    REPLAN_PROMPT_DEFAULT,
+    REPLAN_PROMPT_GLM,
+    REPLAN_PROMPT_GLM_5,
+    REPLAN_PROMPT_MINIMAX_M3,
+    REVIEW_PROMPT_ANTHROPIC,
+    REVIEW_PROMPT_DEEPSEEK,
+    REVIEW_PROMPT_DEEPSEEK_V4,
+    REVIEW_PROMPT_DEFAULT,
+    REVIEW_PROMPT_GLM,
+    REVIEW_PROMPT_GLM_5,
+    REVIEW_PROMPT_MINIMAX_M3,
+    SUB_AGENT_PROMPT_ANTHROPIC,
+    SUB_AGENT_PROMPT_DEEPSEEK,
+    SUB_AGENT_PROMPT_DEEPSEEK_V4,
+    SUB_AGENT_PROMPT_DEFAULT,
+    SUB_AGENT_PROMPT_GLM,
+    SUB_AGENT_PROMPT_GLM_5,
+    SUB_AGENT_PROMPT_MINIMAX_M3,
+    list_compiler_types,
+    list_intents,
 )
 
 # ============================================================================
 # Prompt selection
 # ============================================================================
-
 from teragent.core.prompts import get_system_prompt_for_intent as _get_system_prompt_for_intent
-from teragent.core.prompts import list_intents, list_compiler_types
+
+# ModelProvider (Compiler + Adapter composition)
+from teragent.core.provider import ModelProvider
+
+# ============================================================================
+# Core data types
+# ============================================================================
+from teragent.core.tap import (
+    CompiledPrompt,
+    CostTracker,
+    DesktopContext,
+    LongHorizonConfig,
+    LongHorizonStatus,
+    MultimodalContent,
+    TAPCostRecord,
+    TAPRequest,
+    TAPResponse,
+)
+
+# Core types
+from teragent.core.types import (
+    Message,
+    MessageRole,
+    MessageType,
+    ToolSafety,
+    messages_from_dicts,
+    messages_to_api_format,
+)
+
+# ============================================================================
+# EventBus
+# ============================================================================
+from teragent.event_bus import EventBus
+from teragent.hooks.builtin.audit_hook import AuditHook
+from teragent.hooks.builtin.dangerous_command_hook import DangerousCommandHook
+
+# ============================================================================
+# Hooks
+# ============================================================================
+from teragent.hooks.manager import (
+    Hook,
+    HookContext,
+    HookDecision,
+    HookEvent,
+    HookManager,
+    HookResult,
+    PythonHook,
+    ShellHook,
+)
+
+# ============================================================================
+# Intent
+# ============================================================================
+from teragent.intent.classifier import IntentClassifier, IntentType
+from teragent.intent.confirmation import ConfirmationGate
+from teragent.pipeline.checklist import (
+    TaskInfo,
+    check_code_quality,
+    check_fallback_files,
+    check_file_conflicts,
+    check_requirements,
+    check_runnable,
+    run_deterministic_checks,
+)
+
+# ============================================================================
+# Pipeline primitives
+# ============================================================================
+from teragent.pipeline.extractor import extract_files_from_response
+from teragent.pipeline.prompt_builder import (
+    DEFAULT_SYSTEM_TEMPLATE,
+    build_prompt,
+    build_subagent_prompt,
+    validate_prompt_tokens,
+)
+from teragent.pipeline.retry import retry_with_backoff
+
+# TAP Tracing + DPO pair generation
+from teragent.pipeline.tracing import (
+    DataConstitution,
+    DPOPair,
+    TAPTracer,
+    TraceRecord,
+    TraceStats,
+)
+from teragent.reliability.budget import DEFAULT_MAX_STEPS, StepBudget
+
+# DependencyReporter moved to lazy import (requires optional deps)
+# ============================================================================
+# Reliability
+# ============================================================================
+from teragent.reliability.circuit_breaker import (
+    BreakerState,
+    BudgetCheckResult,
+    CircuitBreakerManager,
+    ConsecutiveFailureBreaker,
+    CostBudgetConfig,
+    CostBudgetTracker,
+    LatencyBreaker,
+    ModelBreakerConfig,
+    ModelBreakerState,
+    ModelCircuitBreakerManager,
+    ProgressDetector,
+)
+from teragent.reliability.recovery import (
+    DegradationChain,
+    LongHorizonRecoveryManager,
+    RateLimitHandler,
+    RateLimitInfo,
+    RecoveryManager,
+    RecoveryManagerConfig,
+    RecoveryStats,
+    RecoveryType,
+    is_context_overflow_error,
+    is_retryable_error,
+)
+from teragent.security.ai_permission_classifier import AIPermissionClassifier
+from teragent.security.audit import AuditLogger
+from teragent.security.file_state import FileStateTracker
+from teragent.security.file_writer import atomic_write_file, write_files_safely
+from teragent.security.firecracker_sandbox import FirecrackerSandbox
+
+# ============================================================================
+# Security architecture
+# ============================================================================
+from teragent.security.permission import (
+    EnhancedPermissionManager,
+    PermissionEffect,
+    PermissionLevel,
+    PermissionManager,
+    PermissionRule,
+)
+from teragent.security.sandbox import check_command_safety, execute_in_sandbox
+
+# ============================================================================
+# Session
+# ============================================================================
+from teragent.session.persistence import SessionData, SessionInfo, SessionPersistence
+
+# ============================================================================
+# Streaming
+# ============================================================================
+from teragent.streaming.stream_events import (
+    AnthropicStreamParser,
+    OpenAIStreamParser,
+    StreamEvent,
+    StreamEventType,
+    StreamingChatResult,
+    ToolCallAccumulator,
+)
+from teragent.streaming.streaming_executor import (
+    StreamingExecutionStats,
+    StreamingToolExecutor,
+)
+
+# ============================================================================
+# Tools — base abstractions for tool system
+# ============================================================================
+from teragent.tools.base import BaseTool, ToolResult
+from teragent.tools.orchestrator import MAX_CONCURRENT_TOOLS, ToolOrchestrator
+from teragent.tools.registry import ToolRegistry
+
+# ============================================================================
+# Prompt selection helper
+# ============================================================================
 
 def get_system_prompt_for_intent(
     intent: str,
@@ -248,178 +465,6 @@ def get_system_prompt_for_intent(
     return _get_system_prompt_for_intent(intent, compiler_type=compiler_type)
 
 
-# Prompt templates
-from teragent.core.prompts import (
-    DESIGN_PROMPT_DEFAULT, DESIGN_PROMPT_GLM, DESIGN_PROMPT_ANTHROPIC, DESIGN_PROMPT_DEEPSEEK,
-    DESIGN_PROMPT_DEEPSEEK_V4, DESIGN_PROMPT_GLM_5, DESIGN_PROMPT_MINIMAX_M3,
-    PLAN_PROMPT_DEFAULT, PLAN_PROMPT_GLM, PLAN_PROMPT_ANTHROPIC, PLAN_PROMPT_DEEPSEEK,
-    PLAN_PROMPT_DEEPSEEK_V4, PLAN_PROMPT_GLM_5, PLAN_PROMPT_MINIMAX_M3,
-    REPLAN_PROMPT_DEFAULT, REPLAN_PROMPT_GLM, REPLAN_PROMPT_ANTHROPIC, REPLAN_PROMPT_DEEPSEEK,
-    REPLAN_PROMPT_DEEPSEEK_V4, REPLAN_PROMPT_GLM_5, REPLAN_PROMPT_MINIMAX_M3,
-    REVIEW_PROMPT_DEFAULT, REVIEW_PROMPT_GLM, REVIEW_PROMPT_ANTHROPIC, REVIEW_PROMPT_DEEPSEEK,
-    REVIEW_PROMPT_DEEPSEEK_V4, REVIEW_PROMPT_GLM_5, REVIEW_PROMPT_MINIMAX_M3,
-    AGENT_PROMPT_DEFAULT, AGENT_PROMPT_GLM, AGENT_PROMPT_ANTHROPIC, AGENT_PROMPT_DEEPSEEK,
-    AGENT_PROMPT_DEEPSEEK_V4, AGENT_PROMPT_GLM_5, AGENT_PROMPT_MINIMAX_M3,
-    CHAT_PROMPT_DEFAULT, CHAT_PROMPT_GLM, CHAT_PROMPT_ANTHROPIC, CHAT_PROMPT_DEEPSEEK,
-    CHAT_PROMPT_DEEPSEEK_V4, CHAT_PROMPT_GLM_5, CHAT_PROMPT_MINIMAX_M3,
-    SUB_AGENT_PROMPT_DEFAULT, SUB_AGENT_PROMPT_GLM, SUB_AGENT_PROMPT_ANTHROPIC, SUB_AGENT_PROMPT_DEEPSEEK,
-    SUB_AGENT_PROMPT_DEEPSEEK_V4, SUB_AGENT_PROMPT_GLM_5, SUB_AGENT_PROMPT_MINIMAX_M3,
-    EXECUTE_PROMPT_DEFAULT, EXECUTE_PROMPT_GLM, EXECUTE_PROMPT_ANTHROPIC, EXECUTE_PROMPT_DEEPSEEK,
-    EXECUTE_PROMPT_DEEPSEEK_V4, EXECUTE_PROMPT_GLM_5, EXECUTE_PROMPT_MINIMAX_M3,
-    CUDA_TRITON_PROMPT_GLM_5,
-)
-
-# ============================================================================
-# Security architecture
-# ============================================================================
-
-from teragent.security.permission import (
-    PermissionManager,
-    PermissionLevel,
-    EnhancedPermissionManager,
-    PermissionRule,
-    PermissionEffect,
-)
-from teragent.security.file_state import FileStateTracker
-from teragent.security.file_writer import write_files_safely, atomic_write_file
-from teragent.security.ai_permission_classifier import AIPermissionClassifier
-from teragent.security.sandbox import execute_in_sandbox, check_command_safety
-from teragent.security.audit import AuditLogger
-from teragent.security.firecracker_sandbox import FirecrackerSandbox
-
-# ============================================================================
-# Context management — core components always available
-# ============================================================================
-
-from teragent.context.context_window import ContextWindow
-from teragent.context.microcompactor import Microcompactor
-from teragent.context.auto_compact import AutoCompactor
-from teragent.context.memory import (
-    load_agent_md,
-    save_agent_md,
-    merge_agent_md,
-    extract_rules,
-)
-# DependencyReporter moved to lazy import (requires optional deps)
-
-# ============================================================================
-# Reliability
-# ============================================================================
-
-from teragent.reliability.circuit_breaker import (
-    CircuitBreakerManager,
-    CostBudgetTracker,
-    CostBudgetConfig,
-    BudgetCheckResult,
-    BreakerState,
-    ConsecutiveFailureBreaker,
-    LatencyBreaker,
-    ProgressDetector,
-    ModelBreakerConfig,
-    ModelBreakerState,
-    ModelCircuitBreakerManager,
-)
-from teragent.reliability.budget import StepBudget, DEFAULT_MAX_STEPS
-from teragent.reliability.recovery import (
-    RecoveryType,
-    RecoveryStats,
-    RecoveryManagerConfig,
-    RecoveryManager,
-    is_context_overflow_error,
-    is_retryable_error,
-    DegradationChain,
-    LongHorizonRecoveryManager,
-    RateLimitInfo,
-    RateLimitHandler,
-)
-
-# ============================================================================
-# EventBus
-# ============================================================================
-
-from teragent.event_bus import EventBus
-
-# ============================================================================
-# Coordination
-# ============================================================================
-
-from teragent.coordination.message_bus import AgentMessageBus, AgentMessage
-from teragent.coordination.sub_agent_manager import (
-    SubAgentManager,
-    AgentMode,
-    SubAgentStatus,
-    SubAgentInfo,
-)
-
-# ============================================================================
-# Intent
-# ============================================================================
-
-from teragent.intent.classifier import IntentClassifier, IntentType
-from teragent.intent.confirmation import ConfirmationGate
-
-# ============================================================================
-# Hooks
-# ============================================================================
-
-from teragent.hooks.manager import (
-    HookEvent,
-    HookDecision,
-    HookContext,
-    HookResult,
-    Hook,
-    ShellHook,
-    PythonHook,
-    HookManager,
-)
-from teragent.hooks.builtin.audit_hook import AuditHook
-from teragent.hooks.builtin.dangerous_command_hook import DangerousCommandHook
-
-# ============================================================================
-# Session
-# ============================================================================
-
-from teragent.session.persistence import SessionPersistence, SessionData, SessionInfo
-
-# ============================================================================
-# Streaming
-# ============================================================================
-
-from teragent.streaming.stream_events import (
-    StreamEventType,
-    StreamEvent,
-    ToolCallAccumulator,
-    StreamingChatResult,
-    OpenAIStreamParser,
-    AnthropicStreamParser,
-)
-from teragent.streaming.streaming_executor import (
-    StreamingToolExecutor,
-    StreamingExecutionStats,
-)
-
-# ============================================================================
-# Tools — base abstractions for tool system
-# ============================================================================
-
-from teragent.tools.base import BaseTool, ToolResult
-from teragent.tools.registry import ToolRegistry
-from teragent.tools.orchestrator import ToolOrchestrator, MAX_CONCURRENT_TOOLS
-
-# ============================================================================
-# AgentLoop — central orchestration class
-# ============================================================================
-
-from teragent.agent_loop import AgentLoop
-
-# ============================================================================
-# Trigger compiler/adapter registration
-# ============================================================================
-
-import teragent.core.compilers  # noqa: F401 — registers: default, glm, anthropic, deepseek, deepseek_v4, deepseek_v4_flash, deepseek_v4_pro, glm_5, minimax_m3
-import teragent.core.adapters   # noqa: F401 — registers: openai_compatible, anthropic_native, minimax_native, mock
-
-
 # ============================================================================
 # Lazy imports for optional-dependency components
 # ============================================================================
@@ -452,6 +497,13 @@ def __getattr__(name: str):
         from teragent.context.vector_indexer import VectorIndexer
         return VectorIndexer
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ============================================================================
+# Module logger (after all imports)
+# ============================================================================
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -565,7 +617,8 @@ def create_provider(
         compiler_instance = compiler
 
     # Resolve API key (centralized via ApiKeyVault)
-    from teragent.config.api_key_security import ApiKeyVault, mask_api_key as _mask
+    from teragent.config.api_key_security import ApiKeyVault
+    from teragent.config.api_key_security import mask_api_key as _mask
     vault = ApiKeyVault()
 
     resolved_api_key = ""
@@ -627,7 +680,7 @@ def create_provider(
 # Version
 # ============================================================================
 
-__version__ = "0.0.1"
+__version__ = "0.1.1"
 
 
 # ============================================================================

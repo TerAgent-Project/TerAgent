@@ -56,9 +56,9 @@ import functools
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum, IntEnum
 from typing import Any, Awaitable, Callable
-from enum import IntEnum, Enum
 
 from teragent.utils.exceptions import PermissionDenied
 
@@ -118,6 +118,7 @@ class PermissionManager:
             # 审计日志 (PLAN 5.4) -- try async, fall back to sync log
             try:
                 import asyncio
+
                 from teragent.security.audit import log_audit
                 try:
                     loop = asyncio.get_running_loop()
@@ -719,6 +720,7 @@ class EnhancedPermissionManager:
             # Fire-and-forget audit logging
             try:
                 import asyncio
+
                 from teragent.security.audit import log_audit
                 loop = asyncio.get_running_loop()
                 loop.create_task(log_audit(

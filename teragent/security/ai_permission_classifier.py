@@ -54,10 +54,9 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from teragent.security.permission import PermissionEffect, PermissionLevel
-from teragent.core.types import ToolSafety
+from teragent.security.permission import PermissionEffect
 
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider

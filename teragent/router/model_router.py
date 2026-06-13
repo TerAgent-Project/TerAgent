@@ -25,7 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from teragent.core.tap import TAPRequest
 
@@ -840,7 +840,7 @@ class ModelRouter:
         # Fallback also unavailable → try cost_fallback_order
         for candidate in self._routing_table.cost_fallback_order:
             if candidate != current_driver and self._is_driver_available(candidate) and not self._is_circuit_open(candidate):
-                decision.add_trace("degradation", candidate, f"accepted (both primary and fallback unavailable)")
+                decision.add_trace("degradation", candidate, "accepted (both primary and fallback unavailable)")
                 decision.reason = RoutingReason.DEGRADATION
                 logger.warning(
                     f"Model degradation: primary {current_driver} and fallback unavailable, "

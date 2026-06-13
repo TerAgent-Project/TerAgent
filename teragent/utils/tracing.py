@@ -5,11 +5,11 @@ get_span_summary) is marked @experimental — it is a planned feature
 for distributed tracing and its interface may change in future versions.
 """
 
-import uuid
-import time
 import contextvars
 import functools
 import logging
+import time
+import uuid
 import warnings
 from dataclasses import dataclass, field
 

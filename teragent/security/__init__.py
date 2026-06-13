@@ -8,19 +8,19 @@
   - AI 权限分类器
 """
 
-from teragent.security.permission import (
-    PermissionManager,
-    PermissionLevel,
-    EnhancedPermissionManager,
-    PermissionRule,
-    PermissionEffect,
-)
+from teragent.security.ai_permission_classifier import AIPermissionClassifier
+from teragent.security.audit import AuditLogger
 from teragent.security.file_state import FileStateTracker
 from teragent.security.file_writer import atomic_write_file, write_files_safely
-from teragent.security.ai_permission_classifier import AIPermissionClassifier
-from teragent.security.sandbox import execute_in_sandbox, check_command_safety
 from teragent.security.firecracker_sandbox import FirecrackerSandbox
-from teragent.security.audit import AuditLogger
+from teragent.security.permission import (
+    EnhancedPermissionManager,
+    PermissionEffect,
+    PermissionLevel,
+    PermissionManager,
+    PermissionRule,
+)
+from teragent.security.sandbox import check_command_safety, execute_in_sandbox
 
 __all__ = [
     "PermissionManager",
