@@ -18,6 +18,11 @@
 import logging
 import time
 
+__all__ = [
+    "AuditHook",
+    "create_audit_hook",
+]
+
 from teragent.hooks.manager import (
     HookContext,
     HookDecision,

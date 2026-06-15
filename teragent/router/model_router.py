@@ -27,6 +27,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+__all__ = [
+    "ModelRouter",
+    "PipelineManager",
+    "PipelineProfile",
+    "RoutingDecision",
+    "RoutingReason",
+    "RoutingTable",
+]
+
 from teragent.core.tap import TAPRequest
 
 logger = logging.getLogger(__name__)
@@ -103,14 +112,14 @@ class RoutingTable:
     # config-driven pipeline defaults (design→V4-Pro, plan→V4-Pro, execute→V4-Flash).
     intent_routing: dict[str, str] = field(default_factory=lambda: {
         "design": "openai_compatible.deepseek_v4_pro",
-        "plan": "openai_compatible.glm_5",
-        "execute": "openai_compatible.glm_5",
+        "plan": "openai_compatible.glm_52",       # GLM-5.2 1M context + dual thinking
+        "execute": "openai_compatible.glm_52",     # GLM-5.2 for complex coding
         "review": "openai_compatible.deepseek_v4_pro",
         "chat": "openai_compatible.deepseek_v4_flash",
         # Aliases for common intent names
         "code_generation": "openai_compatible.deepseek_v4_flash",
         "debug": "openai_compatible.deepseek_v4_flash",
-        "replan": "openai_compatible.glm_5",
+        "replan": "openai_compatible.glm_52",      # GLM-5.2 for replan
         "sub_agent": "openai_compatible.deepseek_v4_flash",
         "chat_friendly": "openai_compatible.deepseek_v4_flash",
     })
@@ -121,19 +130,22 @@ class RoutingTable:
     # Desktop override: when request has desktop context → M3
     desktop_driver: str = "openai_compatible.minimax_m3"
 
-    # Context >200K override candidates (excludes GLM-5)
+    # Context >200K override candidates (GLM-5.2 preferred for 1M usable context)
     long_context_candidates: list[str] = field(default_factory=lambda: [
-        "openai_compatible.deepseek_v4_pro",
-        "openai_compatible.minimax_m3",
+        "openai_compatible.glm_52",              # GLM-5.2: 1M truly usable
+        "openai_compatible.deepseek_v4_pro",     # V4-Pro: 1M context
+        "openai_compatible.minimax_m3",           # M3: 1M context
     ])
 
-    # Long-horizon override: when request has long_horizon config → GLM-5
-    long_horizon_driver: str = "openai_compatible.glm_5"
+    # Long-horizon override: when request has long_horizon config → GLM-5.2
+    # (GLM-5.2 inherits 8h+ capability from GLM-5 + 1M context + dual thinking)
+    long_horizon_driver: str = "openai_compatible.glm_52"
 
     # Cost-based fallback order (cheapest first)
     cost_fallback_order: list[str] = field(default_factory=lambda: [
         "openai_compatible.deepseek_v4_flash",
         "openai_compatible.glm_5",
+        "openai_compatible.glm_52",
         "openai_compatible.deepseek_v4_pro",
         "openai_compatible.minimax_m3",
     ])
@@ -143,6 +155,8 @@ class RoutingTable:
         "openai_compatible.deepseek_v4_pro": "openai_compatible.deepseek_v4_flash",
         "openai_compatible.deepseek_v4_flash": "openai_compatible.glm_5",
         "openai_compatible.glm_5": "openai_compatible.deepseek_v4_flash",
+        "openai_compatible.glm_52": "openai_compatible.glm_5",         # GLM-5.2 → GLM-5 (200K fallback)
+        "openai_compatible.glm_5v_turbo": "openai_compatible.minimax_m3", # 5V-Turbo → M3 (both multimodal)
         "openai_compatible.minimax_m3": "openai_compatible.deepseek_v4_pro",
     })
 
@@ -167,6 +181,15 @@ class RoutingTable:
             "prompt_per_million": 2.0,
             "completion_per_million": 8.0,
         },
+        "openai_compatible.glm_52": {
+            "prompt_per_million": 3.0,
+            "completion_per_million": 10.0,
+            "cache_hit_per_million": 0.3,
+        },
+        "openai_compatible.glm_5v_turbo": {
+            "prompt_per_million": 1.5,
+            "completion_per_million": 5.0,
+        },
     })
 
     # Maximum context tokens per model (for context length override)
@@ -175,6 +198,8 @@ class RoutingTable:
         "openai_compatible.deepseek_v4_pro": 1_000_000,
         "openai_compatible.minimax_m3": 1_000_000,
         "openai_compatible.glm_5": 200_000,
+        "openai_compatible.glm_52": 1_000_000,      # GLM-5.2: 1M truly usable
+        "openai_compatible.glm_5v_turbo": 128_000,  # 5V-Turbo: 128K
     })
 
     # Compiler inference from driver name
@@ -183,6 +208,8 @@ class RoutingTable:
         "openai_compatible.deepseek_v4_pro": "deepseek_v4",
         "openai_compatible.minimax_m3": "minimax_m3",
         "openai_compatible.glm_5": "glm_5",
+        "openai_compatible.glm_52": "glm_52",
+        "openai_compatible.glm_5v_turbo": "glm_5v_turbo",
     })
 
     def resolve_compiler(self, driver_name: str) -> str:
@@ -362,7 +389,7 @@ class PipelineManager:
         # Default profile: optimal quality per stage
         self.register_profile(PipelineProfile(
             name="default",
-            description="默认配置：设计/审查→V4-Pro, 规划/执行→GLM-5",
+            description="默认配置：设计/审查→V4-Pro, 规划/执行→GLM-5.2",
             design_driver=rt.get_intent_driver("design"),
             plan_driver=rt.get_intent_driver("plan"),
             execute_driver=rt.get_intent_driver("execute"),
@@ -387,6 +414,16 @@ class PipelineManager:
             plan_driver="openai_compatible.minimax_m3",
             execute_driver="openai_compatible.minimax_m3",
             review_driver="openai_compatible.minimax_m3",
+        ))
+
+        # Deep thinking profile: GLM-5.2 Max mode for all stages (highest quality)
+        self.register_profile(PipelineProfile(
+            name="deep_thinking",
+            description="深度思考模式：所有阶段使用 GLM-5.2（Max 思考模式）",
+            design_driver="openai_compatible.glm_52",
+            plan_driver="openai_compatible.glm_52",
+            execute_driver="openai_compatible.glm_52",
+            review_driver="openai_compatible.glm_52",
         ))
 
     def register_profile(self, profile: PipelineProfile) -> None:
@@ -914,7 +951,10 @@ class ModelRouter:
         )
 
         # Update monthly budget tracking
-        self._monthly_budget_cny += decision.estimated_cost
+        # NOTE: 仅在此处累加估算成本。record_actual_cost() 会替换为实际成本。
+        # 避免双重计数：如果后续会调用 record_actual_cost()，此处不累加。
+        # 当前设计：_log_decision 仅用于日志记录，预算追踪统一由 record_actual_cost 管理。
+        # self._monthly_budget_cny += decision.estimated_cost  # 已移除，避免双重计数
 
     # ===== Provider access =====
 

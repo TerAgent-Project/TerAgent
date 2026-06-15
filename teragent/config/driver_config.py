@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(frozen=True)
 class DriverConfig:
     """Complete configuration for a single model driver.
 
@@ -38,14 +38,14 @@ class DriverConfig:
 
     Attributes:
         adapter: Protocol name — determines how to send HTTP requests.
-            Values: "openai_compatible" | "anthropic_native" | "mock"
+            Values: "openai_compatible" | "anthropic_native" | "glm_native" | "minimax_native" | "mock"
         identity: Model identity — determines *what* the model is, regardless of protocol.
             Values: "glm" | "claude" | "deepseek" | "step" | custom
         base_url: API endpoint URL
         api_key: Resolved API key (from env var, .env, or plaintext — never stored in config)
         model: Model version string (e.g., "glm-5", "claude-sonnet-4-20250514")
         compiler: Compiler name — determines how to compile TAP prompts.
-            Values: "default" | "glm" | "anthropic" | "deepseek"
+            Values: "default" | "glm" | "glm_5" | "glm_52" | "glm_5v_turbo" | "anthropic" | "deepseek" | "deepseek_v4" | "minimax_m3"
         timeout: HTTP request timeout in seconds
         extra_headers: Additional HTTP headers (for gateway auth, etc.)
         full_name: Fully qualified driver name (e.g., "openai_compatible.glm_5")
@@ -79,7 +79,7 @@ class DriverConfig:
     def __post_init__(self) -> None:
         """Derive full_name if not explicitly set"""
         if not self.full_name and self.adapter and self.identity:
-            self.full_name = f"{self.adapter}.{self.identity}"
+            object.__setattr__(self, "full_name", f"{self.adapter}.{self.identity}")
 
     @property
     def is_configured(self) -> bool:
@@ -124,6 +124,11 @@ class DriverConfig:
     def is_glm_5(self) -> bool:
         """Whether this driver is for GLM-5"""
         return self.compiler == "glm_5"
+
+    @property
+    def is_glm_52(self) -> bool:
+        """Whether this driver is for GLM-5.2"""
+        return self.compiler == "glm_52"
 
     @property
     def is_minimax_m3(self) -> bool:

@@ -33,7 +33,7 @@ The central insight is that **prompt format** and **API protocol** are two indep
 | Prompt format | Model family | GLM recency effect, Anthropic XML tags, DeepSeek minimalist |
 | API protocol | Provider | OpenAI `/chat/completions`, Anthropic `/messages` |
 
-By separating these into **Compiler** and **Adapter**, we get **4 × 3 = 12 combinations** instead of 12 separate integrations.
+By separating these into **Compiler** and **Adapter**, we get **9 × 5 = 45 combinations** (9 compilers × 5 adapters) instead of 45 separate integrations. In production (excluding the `mock` adapter), that's **9 × 4 = 36 valid combinations**.
 
 **Adding a new model** requires only a new Compiler class. **Adding a new protocol** requires only a new Adapter class. The two compose orthogonally.
 
@@ -50,9 +50,9 @@ TAP IR is **not** a wire protocol. It is an in-memory data structure that captur
 Security is not an afterthought — it is woven into every layer:
 
 - **7-layer permission resolution** (user → config → project → system → level → AI → deny)
-- **6-layer command defense** (normalization → chain split → blacklist → cross-chain → package → metacharacters)
-- **2-phase commit file writes** (validate → write temp → atomic swap → rollback)
-- **3-level sandbox degradation** (Firecracker → Docker → subprocess)
+- **6-layer command defense** (normalization → chain split → blacklist → cross-chain → package → metacharacters) + platform-specific patterns (Windows 16-pattern blacklist, Windows system path protection)
+- **2-phase commit file writes** (validate → write temp → atomic swap → rollback) with NTFS 3-step fallback for Windows
+- **3-level sandbox degradation** (Firecracker → Docker → subprocess) with cross-platform process management
 
 ### 4. Advisory-First Reliability
 
@@ -95,6 +95,23 @@ TerAgent's reliability system defaults to **advisory, not blocking**:
    └─────────────────┘  │ VectorIndexer*  │
                         └─────────────────┘
                         (* optional dependencies)
+
+   ┌──────────────────────┐  ┌──────────────────────────────────────┐
+   │   Router             │  │   Long-Horizon                       │
+   │                      │  │                                      │
+   │ ModelRouter          │  │ LongHorizonTaskManager               │
+   │ RoutingTable         │  │ CheckpointStore                      │
+   │ PipelineManager      │  │ SelfEvaluator                        │
+   └──────────────────────┘  │ StrategySwitcher                     │
+                             │ ProgressTracker                      │
+   ┌──────────────────────┐  └──────────────────────────────────────┘
+   │   Benchmark          │
+   │                      │  ┌──────────────────────────────────────┐
+   │ BenchmarkRunner      │  │   Tools                              │
+   └──────────────────────┘  │                                      │
+                             │ BaseTool, ToolRegistry, Orchestrator │
+                             │ DesktopTool (desktop automation)     │
+                             └──────────────────────────────────────┘
 ```
 
 ## Data Flow: A Complete TAP Call
@@ -159,6 +176,34 @@ User Input
 └──────────────────┘
 ```
 
+## Registered Compilers & Adapters
+
+### Compilers (9 registered)
+
+| Name | Class | Optimization Strategy |
+|------|-------|----------------------|
+| `default` | `TAPCompiler` | Standard chat messages |
+| `glm` | `TAPCompiler` | Recency effect (key instruction last) |
+| `glm_5` | `GLM5Compiler` | Recency effect + long-horizon + self-evaluation |
+| `glm_52` | `GLM52Compiler` | 1M context + dual thinking (High/Max) + PreservedThinking + 5V-Turbo coordination |
+| `glm_5v_turbo` | `GLM5VTurboCompiler` | Vision analysis for GLM-5V-Turbo model |
+| `anthropic` | `TAPCompiler` | XML tag structured + Mode B (system/user separation) |
+| `deepseek` | `TAPCompiler` | Minimalist compilation |
+| `deepseek_v4` | `DeepSeekV4Compiler` | Cache-aware layout + thinking mode + 1M context optimization (flash/pro via `variant` param) |
+| `minimax_m3` | `MiniMaxM3Compiler` | MSA full-text injection + multimodal + desktop context |
+
+> **Note:** `deepseek_v4_flash` and `deepseek_v4_pro` are **NOT** separate compilers — they are variants of `DeepSeekV4Compiler` controlled by the `variant` parameter.
+
+### Adapters (5 registered)
+
+| Name | Class | Protocol |
+|------|-------|----------|
+| `openai_compatible` | `OpenAICompatibleAdapter` | OpenAI `/chat/completions` with SSE |
+| `anthropic_native` | `AnthropicNativeAdapter` | Anthropic `/messages` with Anthropic SSE |
+| `glm_native` | `GLMNativeAdapter` | Zhipu AI native API |
+| `minimax_native` | `MiniMaxNativeAdapter` | MiniMax native API with rate limit tracking |
+| `mock` | `MockAdapter` | No HTTP calls (testing) |
+
 ## CompiledPrompt: Two Modes
 
 Compilers produce one of two mutually exclusive prompt formats:
@@ -172,6 +217,7 @@ CompiledPrompt(
         {"role": "user", "content": "..."},
     ],
     tools=[...],
+    extra={"cache_aware": True},  # Compiler-specific parameters passed to adapter
 )
 ```
 
@@ -182,10 +228,11 @@ CompiledPrompt(
     system_prompt="...",
     user_message="...",
     tools=[...],
+    extra={},  # Extra dict for compiler-specific parameters
 )
 ```
 
-The `CompiledPrompt.mode` property returns `"messages"`, `"system_user"`, or `"empty"`. Adapters check `required_mode` to validate compatibility.
+The `CompiledPrompt.mode` property returns `"messages"`, `"system_user"`, or `"empty"`. Adapters check `required_mode` to validate compatibility. The `extra` dict carries compiler-specific parameters (e.g., `cache_aware`, `variant`, `minimax_video_mode`) that adapters use to customize their behavior.
 
 ## Compiler Registry Pattern
 
@@ -247,3 +294,18 @@ SubAgentManager
     ├── ToolRegistry (shared reference)
     └── AgentMessageBus (shared reference)
 ```
+
+## Cross-Platform Architecture
+
+TerAgent's cross-platform support is built on platform abstraction rather than scattered `if sys.platform` checks:
+
+| Subsystem | Abstraction | Windows | macOS | Linux |
+|-----------|-------------|---------|-------|-------|
+| Process group | `_kill_process_group()` | `taskkill /F /T` | `os.killpg()` | `os.killpg()` |
+| Session creation | Conditional kwargs | `CREATE_NEW_PROCESS_GROUP` | `start_new_session=True` | `start_new_session=True` + `preexec_fn` |
+| Command parsing | `shlex.split(cmd, posix=...)` | `posix=False` | `posix=True` | `posix=True` |
+| File atomicity | `_sync_atomic_write()` | 3-step rename + backup | `os.replace()` | `os.replace()` |
+| Path normalization | `_is_sensitive_path()` | `.lower()` + `\` → `/` | Preserve case | Preserve case |
+| Config search | `load_full_config()` | `%APPDATA%\teragent\` | `~/Library/Application Support/teragent/` | `~/.config/teragent/` (XDG) |
+
+**FirecrackerSandbox** raises `RuntimeError` at initialization on non-Linux platforms, providing a clear error message instead of a cryptic runtime failure. The sandbox degradation chain automatically falls back to Level 1 (Docker) or Level 0 (subprocess) on unsupported platforms.

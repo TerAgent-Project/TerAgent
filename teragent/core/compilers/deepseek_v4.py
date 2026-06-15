@@ -52,6 +52,7 @@ class DeepSeekV4Compiler(TAPCompiler):
     """
 
     # 大文件检索注入的 token 阈值：超过此值的文件用检索代替全文
+    # 默认值 50K，当提供 profile 时由 profile.large_file_budget 决定
     LARGE_FILE_TOKEN_THRESHOLD: int = 50_000
 
     def __init__(
@@ -68,7 +69,28 @@ class DeepSeekV4Compiler(TAPCompiler):
         # 跟踪是否为会话中的首次编译（用于缓存预热推荐）
         self._session_compile_count: int = 0
         # 上下文分区配置：默认使用 DeepSeek V4 1M 分区
-        self.profile: ContextProfile = profile or DeepSeekV4ContextProfile()
+        self._context_profile: DeepSeekV4ContextProfile = (
+            profile if isinstance(profile, DeepSeekV4ContextProfile)
+            else profile or DeepSeekV4ContextProfile()
+        )
+
+    @property
+    def profile(self) -> ContextProfile:
+        """当前上下文分区配置（向后兼容属性）"""
+        return self._context_profile
+
+    @profile.setter
+    def profile(self, value: ContextProfile) -> None:
+        """设置上下文分区配置"""
+        self._context_profile = value
+
+    def get_context_profile(self) -> DeepSeekV4ContextProfile:
+        """返回当前的上下文分区配置
+
+        Returns:
+            当前使用的 DeepSeekV4ContextProfile 实例
+        """
+        return self._context_profile
 
     # ----- Capability overrides -----
 
@@ -79,8 +101,8 @@ class DeepSeekV4Compiler(TAPCompiler):
 
     @property
     def max_context_tokens(self) -> int:
-        """DeepSeek V4 支持 1M tokens 上下文"""
-        return 1_000_000
+        """DeepSeek V4 支持 1M tokens 上下文（从 profile 获取）"""
+        return self._context_profile.max_tokens
 
     def _get_compiler_type(self) -> str:
         """Compiler type for prompt registry lookup"""
@@ -144,8 +166,14 @@ class DeepSeekV4Compiler(TAPCompiler):
             compiled: 已编译的 CompiledPrompt，会被就地修改
             request: 原始 TAP 请求
         """
-        # 标记缓存感知已启用
+        # 标记缓存感知已启用，并记录 profile 派生的分区预算
         compiled.extra["cache_aware"] = True
+        compiled.extra["profile_budgets"] = {
+            "system": self._context_profile.system_budget,
+            "history": self._context_profile.history_budget,
+            "large_file": self._context_profile.large_file_budget,
+            "tail_reinforcement": self._context_profile.tail_reinforcement_budget,
+        }
 
         # ---- 第一步：分类现有消息 ----
         _frozen_messages: list[dict] = []
@@ -156,15 +184,16 @@ class DeepSeekV4Compiler(TAPCompiler):
             # 大文件注入内容标记为 semi-static
             if msg.get("_section") == "large_file":
                 semi_static_messages.append(msg)
-            # 系统提示属于冻结前缀（但在这里先收集，后面统一前置）
+            # 系统提示属于冻结前缀（收集内容，由 _build_cache_prefix 统一重建）
             elif msg.get("role") == "system":
-                # 系统消息由 _build_cache_prefix 统一处理，不在此分类
-                pass
+                # 保留系统消息内容，避免丢失约束和格式提示
+                _frozen_messages.append(msg)
             else:
                 dynamic_messages.append(msg)
 
         # ---- 第二步：构建冻结前缀消息（系统提示 + 工具定义） ----
-        cache_prefix_messages = self._build_cache_prefix(request)
+        # 传入已有的系统消息内容，确保约束和格式提示不被丢失
+        cache_prefix_messages = self._build_cache_prefix(request, _frozen_messages)
 
         if cache_prefix_messages:
             # 标记缓存前缀已冻结
@@ -209,7 +238,7 @@ class DeepSeekV4Compiler(TAPCompiler):
         if request.cache_preference == "aggressive":
             compiled.extra["cache_prefix_frozen"] = True
 
-    def _build_cache_prefix(self, request: TAPRequest) -> list[dict]:
+    def _build_cache_prefix(self, request: TAPRequest, existing_system_messages: list[dict] | None = None) -> list[dict]:
         """构建缓存冻结前缀消息列表
 
         冻结前缀包含：
@@ -224,6 +253,8 @@ class DeepSeekV4Compiler(TAPCompiler):
 
         Args:
             request: TAP 请求（用于提取系统提示）
+            existing_system_messages: 已有的系统消息列表（含约束和格式提示），
+                如果提供，将合并到缓存前缀中，避免丢失编译器添加的约束。
 
         Returns:
             构成缓存冻结前缀的消息列表，可能为空
@@ -235,6 +266,19 @@ class DeepSeekV4Compiler(TAPCompiler):
         system_prompt = self.get_system_prompt(intent)
         if system_prompt:
             prefix_messages.append({"role": "system", "content": system_prompt})
+
+        # 合并已有的系统消息内容（约束、格式提示、推理引导等）
+        # 这些是由 _compile_pro/_compile_flash 添加的，不能丢失
+        if existing_system_messages:
+            for msg in existing_system_messages:
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                # 避免重复：如果新系统提示已包含此内容，跳过
+                if system_prompt and content == system_prompt:
+                    continue
+                # 追加为额外的系统消息
+                prefix_messages.append({"role": "system", "content": content})
 
         # 2. 工具定义 — 紧随系统提示之后，确保跨请求缓存命中
         # 将工具定义序列化为一条系统级消息，放在前缀中
@@ -296,10 +340,16 @@ class DeepSeekV4Compiler(TAPCompiler):
         4. Pro 模式额外：推理要求和边界检查提醒
         5. Flash 模式：紧凑格式，仅保留最关键的约束重申
 
+        使用 profile.tail_reinforcement_budget 控制尾部强化的 token 预算。
+
         Args:
             compiled: 已编译的 CompiledPrompt，会被就地修改
             request: 原始 TAP 请求
         """
+        tail_budget = self._context_profile.tail_reinforcement_budget
+        # 将 token 预算转换为粗略字符预算（4 字符/token）
+        tail_char_budget = int(tail_budget * 4)
+
         tail_parts: list[str] = []
         intent = request.meta.get("intent", "execute")
 
@@ -348,14 +398,20 @@ class DeepSeekV4Compiler(TAPCompiler):
         if not tail_parts:
             return
 
-        # 将尾部强化作为 assistant → user 的追加消息
-        # assistant 确认理解 → user 重申关键点
-        compiled.messages.append({"role": "assistant", "content": "理解任务要求。"})
-        compiled.messages.append({"role": "user", "content": "\n".join(tail_parts)})
+        tail_content = "\n".join(tail_parts)
 
-        # 在 extra 中记录尾部强化信息
+        # 截断到尾部强化预算内
+        if len(tail_content) > tail_char_budget:
+            tail_content = tail_content[:tail_char_budget] + "\n... [尾部强化截断]"
+
+        # 修复 H22: 使用 system 消息代替伪造的 assistant 消息
+        # 伪造 assistant 消息（"理解任务要求"）违反 API 协议，部分提供商会拒绝
+        compiled.messages.append({"role": "system", "content": f"[尾部强化 — 务必遵守]\n{tail_content}"})
+
+        # 在 extra 中记录尾部强化信息（含 profile 预算）
         compiled.extra["tail_reinforcement"] = True
         compiled.extra["tail_reinforcement_variant"] = self.variant
+        compiled.extra["tail_reinforcement_budget"] = tail_budget
 
     # ----- Large file retrieval injection (P2-2) -----
 
@@ -384,7 +440,7 @@ class DeepSeekV4Compiler(TAPCompiler):
         if not large_files or not isinstance(large_files, list):
             return
 
-        large_file_budget = self.profile.large_file_budget
+        large_file_budget = self._context_profile.large_file_budget
         remaining_budget = large_file_budget
         injected_files: list[str] = []
 
@@ -404,10 +460,19 @@ class DeepSeekV4Compiler(TAPCompiler):
             if not file_content:
                 continue
 
-            if estimated_tokens >= self.LARGE_FILE_TOKEN_THRESHOLD:
+            # 使用 profile 派生的阈值：large_file_budget 的 10% 作为单个大文件阈值
+            large_file_threshold = max(
+                self.LARGE_FILE_TOKEN_THRESHOLD,
+                int(self._context_profile.large_file_budget * 0.1),
+            )
+
+            if estimated_tokens >= large_file_threshold:
                 # 大文件：注入检索摘要而非全文
-                # 使用检索策略：只注入文件头（类/函数定义）和尾部（关键实现）
-                snippet = self._extract_retrieval_snippet(file_content, file_path)
+                # 使用 _retrieve_relevant_snippets 按相关性检索
+                snippet = self._retrieve_relevant_snippets(
+                    file_content, file_path, request.instruction,
+                    budget=self._context_profile.large_file_budget,
+                )
                 snippet_tokens = int(len(snippet) / 4.0 * 1.3)
 
                 if snippet_tokens > remaining_budget:
@@ -501,6 +566,203 @@ class DeepSeekV4Compiler(TAPCompiler):
         snippet_parts.extend(tail_lines)
 
         return "\n".join(snippet_parts)
+
+    # ----- Relevant snippet retrieval (P2-2 enhanced) -----
+
+    def _retrieve_relevant_snippets(
+        self,
+        content: str,
+        file_path: str,
+        instruction: str,
+        budget: int,
+    ) -> str:
+        """从大文件中按相关性检索代码片段
+
+        CodeIndexer 增强版检索策略：
+        1. 将文件解析为逻辑段（函数、类、导入、全局代码）
+        2. 按与当前指令的相关性评分（关键词匹配 + 位置加权）
+        3. 返回 top-K 最相关的段落，总长度不超过 budget
+
+        Args:
+            content: 文件完整内容
+            file_path: 文件路径
+            instruction: 当前用户指令（用于相关性评分）
+            budget: token 预算限制
+
+        Returns:
+            检索到的代码片段字符串
+        """
+        lines = content.split("\n")
+
+        # Step 1: 解析文件为逻辑段
+        sections = self._parse_file_sections(lines, file_path)
+
+        # Step 2: 按相关性评分
+        scored = self._score_sections(sections, instruction)
+
+        # Step 3: 贪心选择，直到用完预算
+        # 将 token 预算转换为字符预算
+        char_budget = int(budget * 4)
+        selected: list[tuple[float, str]] = []
+        used_chars = 0
+
+        # 始终包含文件头（imports + module docstring）
+        header_section = next(
+            (s for s in scored if s[0].startswith("__header__")), None
+        )
+        if header_section:
+            _, header_text, header_score = header_section
+            header_chars = len(header_text)
+            if header_chars <= char_budget:
+                selected.append((header_score, header_text))
+                used_chars += header_chars
+
+        # 按 score 降序排列，贪心选择
+        remaining = sorted(
+            [s for s in scored if not s[0].startswith("__header__")],
+            key=lambda x: x[2],
+            reverse=True,
+        )
+
+        for section_name, section_text, section_score in remaining:
+            section_chars = len(section_text)
+            if used_chars + section_chars <= char_budget:
+                selected.append((section_score, section_text))
+                used_chars += section_chars
+
+        if not selected:
+            # 回退到简单的头部+尾部策略
+            return self._extract_retrieval_snippet(content, file_path)
+
+        # 组装输出
+        parts = [f"# 文件: {file_path} (相关性检索，共 {len(lines)} 行，检索到 {len(selected)} 段)"]
+        parts.append("")
+        for score, text in sorted(selected, key=lambda x: x[0], reverse=True):
+            parts.append(text)
+            parts.append("")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _parse_file_sections(lines: list[str], file_path: str) -> list[tuple[str, str]]:
+        """将文件解析为逻辑段
+
+        段类型：
+        - __header__: 文件头部（imports, module docstring）
+        - class_XXX: 类定义
+        - func_XXX: 函数/方法定义
+        - global_XXX: 全局代码块
+
+        Args:
+            lines: 文件行列表
+            file_path: 文件路径
+
+        Returns:
+            (section_name, section_text) 列表
+        """
+        sections: list[tuple[str, str]] = []
+        current_name = "__header__"
+        current_lines: list[str] = []
+        global_counter = 0
+
+        def _flush() -> None:
+            nonlocal current_lines
+            if current_lines:
+                text = "\n".join(current_lines)
+                sections.append((current_name, text))
+                current_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            # 检测类定义
+            if stripped.startswith("class ") and stripped.endswith(":"):
+                _flush()
+                class_name = stripped[6:stripped.index("(") if "(" in stripped else stripped.index(":")]
+                current_name = f"class_{class_name.strip()}"
+                current_lines.append(line)
+
+            # 检测函数/方法定义
+            elif stripped.startswith("def ") and stripped.endswith(":"):
+                _flush()
+                func_name = stripped[4:stripped.index("(") if "(" in stripped else stripped.index(":")]
+                current_name = f"func_{func_name.strip()}"
+                current_lines.append(line)
+
+            # 检测 async 函数
+            elif stripped.startswith("async def ") and stripped.endswith(":"):
+                _flush()
+                func_name = stripped[10:stripped.index("(") if "(" in stripped else stripped.index(":")]
+                current_name = f"func_{func_name.strip()}"
+                current_lines.append(line)
+
+            else:
+                # 如果当前在 __header__ 且遇到了非 import/docstring 的代码，
+                # 转换为 global 段
+                if current_name == "__header__" and current_lines:
+                    # 检查 header 是否已经结束（空行后非 import/docstring/装饰器）
+                    if stripped and not stripped.startswith(("#", "import ", "from ", "\"\"\"", "'''", "@")):
+                        _flush()
+                        global_counter += 1
+                        current_name = f"global_{global_counter}"
+
+                current_lines.append(line)
+
+        _flush()
+        return sections
+
+    @staticmethod
+    def _score_sections(
+        sections: list[tuple[str, str]],
+        instruction: str,
+    ) -> list[tuple[str, str, float]]:
+        """按与指令的相关性为段落评分
+
+        评分策略：
+        1. 关键词匹配：指令中的关键词出现在段落中的数量
+        2. 位置加权：靠近文件末尾的段落获得额外权重（recency）
+        3. 段名匹配：段名包含指令关键词的段落加分
+
+        Args:
+            sections: (section_name, section_text) 列表
+            instruction: 当前用户指令
+
+        Returns:
+            (section_name, section_text, score) 列表
+        """
+        # 提取指令关键词（简单分词：按空格和标点）
+        import re
+        instruction_words = set(
+            w.lower() for w in re.split(r'[\s\-\.,;:!?(){}\[\]<>]+', instruction)
+            if len(w) > 2  # 忽略太短的词
+        )
+
+        total_sections = len(sections)
+        result: list[tuple[str, str, float]] = []
+
+        for idx, (name, text) in enumerate(sections):
+            score = 0.0
+            text_lower = text.lower()
+            name_lower = name.lower()
+
+            # 关键词匹配
+            for word in instruction_words:
+                if word in text_lower:
+                    score += 1.0
+                if word in name_lower:
+                    score += 2.0  # 段名匹配加权
+
+            # 位置加权：靠后的段落获得小量加分
+            position_bonus = (idx / max(1, total_sections)) * 0.5
+            score += position_bonus
+
+            # header 始终有基础分（imports 通常重要）
+            if name == "__header__":
+                score += 1.0
+
+            result.append((name, text, score))
+
+        return result
 
     # ----- Cache warmup -----
 

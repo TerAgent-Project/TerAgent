@@ -4,6 +4,12 @@ import logging
 import os
 from typing import TYPE_CHECKING, Protocol
 
+__all__ = [
+    "DependencyReporter",
+    "MAX_REPORT_BUDGET",
+    "TaskProtocol",
+]
+
 if TYPE_CHECKING:
     from teragent.context.code_indexer import CodeIndexer
     from teragent.context.reference_graph import ReferenceGraph

@@ -101,7 +101,7 @@ allowed, reason = epm.check("write_file", path="/src/main.py")
 allowed, reason = await epm.acheck("write_file", path="/src/main.py", context="...")
 ```
 
-### Permission Levels
+### 权限级别
 
 | Level | 值 | 允许的操作 |
 |-------|----|-----------|
@@ -137,6 +137,31 @@ allowed, reason = await epm.acheck("write_file", path="/src/main.py", context=".
 | 远程执行 | `curl \| sh`、`eval`、`source /tmp/...` |
 | Fork 炸弹 / 磁盘写入 | `:(){ :\|:& };:`、`> /dev/sd` |
 
+#### Windows 专属危险模式（16 种）
+
+在 Windows（`sys.platform == "win32"`）上，额外检查 16 种危险命令模式：
+
+| 模式 | 示例 | 类别 |
+|------|------|------|
+| `format X:` | `format C:` | 磁盘格式化 |
+| `del /s`、`rd /s` | `del /s /q C:\` | 递归删除 |
+| `reg delete/add` | `reg delete HKLM\...` | 注册表修改 |
+| `net user` | `net user hacker P@ss /add` | 用户管理 |
+| `net localgroup` | `net localgroup admins hacker /add` | 用户组管理 |
+| `powershell -enc` | `powershell -encodedcommand <base64>` | 编码执行绕过 |
+| `pwsh -enc` | `pwsh -encodedcommand <base64>` | 编码执行绕过 |
+| `diskpart` | `diskpart` | 磁盘分区操作 |
+| `cipher /w:` | `cipher /w:C:\` | 安全擦除数据 |
+| `taskkill` | `taskkill /f /im *` | 进程终止 |
+| `netsh` | `netsh advfirewall` | 网络/防火墙配置 |
+| `takeown` | `takeown /f C:\Windows` | 取得所有权 |
+| `icacls /grant` | `icacls C:\ /grant user:F` | 权限修改 |
+| `wmic` | `wmic process call create` | WMI 命令执行 |
+| `schtasks /create` | `schtasks /create /tn ...` | 创建计划任务 |
+| `schtasks /delete` | `schtasks /delete /tn ...` | 删除计划任务 |
+
+这些模式在 Windows 平台上自动启用，是对 Unix 为主黑名单的补充。
+
 ### 第 4 层：危险重定向检测
 
 针对系统关键路径的重定向进行细粒度检测，按子命令逐一检查：
@@ -144,6 +169,20 @@ allowed, reason = await epm.acheck("write_file", path="/src/main.py", context=".
 - `> /etc/passwd` — 重定向到系统配置
 - `> /dev/sda` — 直接磁盘写入
 - 任何重定向到 `/etc`、`/dev`、`/sys`、`/proc`、`/boot`、`/root`、`/sbin` 的操作
+
+在 Windows 上，以下系统路径同样受保护：
+
+| 路径 | 说明 |
+|------|------|
+| `%SystemRoot%\`（如 `C:\Windows\`） | Windows 系统目录 |
+| `%SystemRoot%\System32\` | 系统二进制文件和配置 |
+| `%SystemRoot%\SysWOW64\` | 64 位系统目录 |
+| `C:\Program Files\` | 已安装应用程序 |
+| `C:\Program Files (x86)\` | 32 位应用程序 |
+| `C:\ProgramData\` | 全局应用数据 |
+| `C:\System Volume Information\` | 系统还原点 |
+
+这些路径从环境变量（`SystemRoot`、`ProgramData`）解析，在 Windows 上自动检查。
 
 ### 第 5 层：跨链检测
 
@@ -179,7 +218,7 @@ Phase 4: Rollback (on any commit failure)
 
 ### 关键特性
 
-- **原子性**：`os.replace()` 在 POSIX 和 Windows 上都是原子操作
+- **原子性**：`os.replace()` 在 POSIX 上是原子操作；在 Windows NTFS 上，使用重命名-重命名-删除 3 步模式，含备份/回滚，确保崩溃恢复
 - **崩溃安全**：中间临时文件防止崩溃导致数据损坏
 - **一致性**：所有文件要么全部提交，要么全部不提交（事务性）
 - **并发安全**：读取者永远不会看到半写入状态
@@ -219,7 +258,12 @@ Level 0（子进程）有两种执行模式：
 
 ### 进程组管理
 
-所有子进程模式使用 `start_new_session=True` 创建新进程组。超时时，`os.killpg()` 终止整个组（包括子进程），防止产生孤儿进程。
+所有子进程模式都会创建新的进程组以实现隔离。实现方式因平台而异：
+
+- **Unix**（`sys.platform != "win32"`）：使用 `start_new_session=True` 创建新会话/进程组。超时时，`os.killpg()` 终止整个组（包括子进程），防止产生孤儿进程。
+- **Windows**（`sys.platform == "win32"`）：使用 `CREATE_NEW_PROCESS_GROUP` 创建标志。超时时，`taskkill /F /T /PID <pid>` 终止整个进程树，包括所有子进程。
+
+`_kill_process_group()` 函数提供统一的跨平台 API，处理两种平台。在失败时（进程已终止、权限拒绝），回退到 `process.kill()`。
 
 ### 输出截断
 
@@ -259,3 +303,21 @@ findings = audit_env_file(".env")
 - 使用 `audit_config_security()` 扫描泄露的 Key
 - 日志记录 Key 信息时使用 `mask_api_key()`
 - 当直接使用 `api_key` 时，库会记录信息日志，建议使用 `api_key_env`
+
+## 跨平台安全说明
+
+### Windows 安全注意事项
+
+TerAgent 的安全沙箱最初为 Unix 系统设计。从 v0.1.2 起，已添加全面的 Windows 支持：
+
+1. **命令安全**：16 种 Windows 专属危险命令模式现已被拦截（见上方第 3 层）
+2. **系统路径保护**：Windows 系统目录已受写入重定向保护（见上方第 4 层）
+3. **Shell 检测**：Windows Shell 可执行文件（`cmd.exe`、`powershell.exe`、`pwsh.exe`）已正确分类为 Shell，用于 exec/shell 模式判断
+4. **命令解析**：`shlex.split()` 在 Windows 上使用 `posix=False` 以正确解析命令行
+5. **Docker 隔离**：Windows Docker Desktop 使用 `ContainerUser` 而非 uid/gid 映射（隔离性略低）
+
+### macOS 和 Linux 说明
+
+- **macOS**：所有级别沙箱均支持（Firecracker 除外，需要 KVM）
+- **Linux**：完整支持，包括 Firecracker。Wayland 桌面自动检测剪贴板操作（`wl-copy`/`wl-paste`）
+- **路径规范化**：在大小写敏感的 Unix 文件系统上，安全检查时不会对路径做小写转换（保留大小写敏感性）

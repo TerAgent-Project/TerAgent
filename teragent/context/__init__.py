@@ -43,6 +43,11 @@ from teragent.context.profiles import (
     GLM5ContextProfile,
     MiniMaxM3ContextProfile,
 )
+from teragent.context.retention_tracker import (
+    LongContextRetentionTracker,
+    PartitionUsage,
+    RetentionRecord,
+)
 
 # DependencyReporter requires CodeIndexer + ReferenceGraph (optional deps),
 # so it must be lazy-loaded too.
@@ -54,52 +59,39 @@ def __getattr__(name: str):
 
     This allows ``import teragent`` to succeed even when optional
     dependencies (lancedb, tree-sitter, networkx) are not installed.
+
+    Results are cached in globals() so that repeated access does not
+    trigger a re-import on every call.
     """
-    if name == "DependencyReporter":
+    _LAZY_IMPORTS = {
+        "DependencyReporter": "teragent.context.dependency_reporter",
+        "TaskProtocol": "teragent.context.dependency_reporter",
+        "CodeIndexer": "teragent.context.code_indexer",
+        "ReferenceGraph": "teragent.context.reference_graph",
+        "VectorIndexer": "teragent.context.vector_indexer",
+    }
+
+    if name in _LAZY_IMPORTS:
+        module_path = _LAZY_IMPORTS[name]
         try:
-            from teragent.context.dependency_reporter import DependencyReporter
-            return DependencyReporter
+            import importlib
+            mod = importlib.import_module(module_path)
+            obj = getattr(mod, name)
         except ImportError:
+            extras_map = {
+                "DependencyReporter": "pip install teragent[ast] teragent[graph]",
+                "TaskProtocol": "pip install teragent[ast] teragent[graph]",
+                "CodeIndexer": "pip install teragent[ast]",
+                "ReferenceGraph": "pip install teragent[graph]",
+                "VectorIndexer": "pip install teragent[vector]",
+            }
             raise ImportError(
-                f"{name} requires optional dependencies (tree-sitter, networkx). "
-                f"Install with: pip install teragent[ast] teragent[graph]"
+                f"{name} requires optional dependencies. "
+                f"Install with: {extras_map.get(name, 'pip install teragent[all]')}"
             )
-    if name == "TaskProtocol":
-        try:
-            from teragent.context.dependency_reporter import TaskProtocol
-            return TaskProtocol
-        except ImportError:
-            raise ImportError(
-                f"{name} requires optional dependencies (tree-sitter, networkx). "
-                f"Install with: pip install teragent[ast] teragent[graph]"
-            )
-    if name == "CodeIndexer":
-        try:
-            from teragent.context.code_indexer import CodeIndexer
-            return CodeIndexer
-        except ImportError:
-            raise ImportError(
-                f"{name} requires optional dependency (tree-sitter). "
-                f"Install with: pip install teragent[ast]"
-            )
-    if name == "ReferenceGraph":
-        try:
-            from teragent.context.reference_graph import ReferenceGraph
-            return ReferenceGraph
-        except ImportError:
-            raise ImportError(
-                f"{name} requires optional dependency (networkx). "
-                f"Install with: pip install teragent[graph]"
-            )
-    if name == "VectorIndexer":
-        try:
-            from teragent.context.vector_indexer import VectorIndexer
-            return VectorIndexer
-        except ImportError:
-            raise ImportError(
-                f"{name} requires optional dependency (LanceDB). "
-                f"Install with: pip install teragent[vector]"
-            )
+        # Cache the imported object in globals() to avoid re-importing
+        globals()[name] = obj
+        return obj
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -113,6 +105,9 @@ __all__ = [
     "MiniMaxM3ContextProfile",
     "Microcompactor",
     "AutoCompactor",
+    "LongContextRetentionTracker",
+    "PartitionUsage",
+    "RetentionRecord",
     "load_agent_md",
     "save_agent_md",
     "merge_agent_md",

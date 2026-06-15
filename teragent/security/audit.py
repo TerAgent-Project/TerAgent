@@ -20,13 +20,29 @@ import threading
 import time
 from typing import Any, Awaitable, Callable
 
+__all__ = [
+    "AuditLogger",
+    "DEFAULT_DB_PATH",
+    "audit_log",
+    "cleanup_old_entries",
+    "get_audit_stats",
+    "get_db_path",
+    "init_audit_db",
+    "log_audit",
+    "query_by_action",
+    "query_by_request_id",
+    "query_by_time_range",
+    "rotate_audit_db",
+    "set_db_path",
+]
+
 import aiosqlite
 
 from teragent.utils.tracing import get_request_id
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = ".agent/audit.db"
+DEFAULT_DB_PATH = os.path.join(".agent", "audit.db")  # 使用 os.path.join 确保跨平台路径分隔符
 
 
 class AuditLogger:
@@ -219,26 +235,27 @@ class AuditLogger:
 
     async def cleanup_old_entries(self, max_age_days: int = 90) -> int:
         """删除超过指定天数的审计记录。"""
-        cutoff = time.time() - (max_age_days * 86400)
-        try:
-            db = await self._get_db()
-            cursor = await db.execute(
-                "DELETE FROM audit_log WHERE timestamp < ?", (cutoff,)
-            )
-            await db.commit()
-            deleted = cursor.rowcount
-            if deleted > 0:
-                logger.info(f"Cleaned up {deleted} audit entries older than {max_age_days} days")
-            return deleted
-        except Exception as e:
-            if self._db is not None:
-                try:
-                    await self._db.close()
-                except Exception:
-                    pass
-            self._db = None
-            logger.error(f"Failed to cleanup old audit entries: {e}")
-            return 0
+        async with self._lock:
+            cutoff = time.time() - (max_age_days * 86400)
+            try:
+                db = await self._get_db()
+                cursor = await db.execute(
+                    "DELETE FROM audit_log WHERE timestamp < ?", (cutoff,)
+                )
+                await db.commit()
+                deleted = cursor.rowcount
+                if deleted > 0:
+                    logger.info(f"Cleaned up {deleted} audit entries older than {max_age_days} days")
+                return deleted
+            except Exception as e:
+                if self._db is not None:
+                    try:
+                        await self._db.close()
+                    except Exception:
+                        pass
+                self._db = None
+                logger.error(f"Failed to cleanup old audit entries: {e}")
+                return 0
 
     async def rotate_audit_db(self, backup_path: str | None = None, max_age_days: int = 90) -> str | None:
         """Rotate the audit DB: create a backup, then clean up old entries."""
@@ -339,7 +356,8 @@ def get_db_path() -> str:
 
     DEPRECATED (Phase 0.3): Use AuditLogger.db_path property instead.
     """
-    return _default_audit_logger.db_path
+    with _db_path_lock:
+        return _default_audit_logger.db_path
 
 
 async def init_audit_db() -> None:
@@ -347,7 +365,9 @@ async def init_audit_db() -> None:
 
     DEPRECATED (Phase 0.3): Use AuditLogger.init_db() instead.
     """
-    await _default_audit_logger.init_db()
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    await logger_instance.init_db()
 
 
 async def log_audit(action: str, details: str = "") -> None:
@@ -355,7 +375,9 @@ async def log_audit(action: str, details: str = "") -> None:
 
     DEPRECATED (Phase 0.3): Use AuditLogger.log_audit() instead.
     """
-    await _default_audit_logger.log_audit(action, details)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    await logger_instance.log_audit(action, details)
 
 
 def audit_log(action_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
@@ -370,11 +392,15 @@ def audit_log(action_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Cal
             try:
                 result = await func(*args, **kwargs)
                 duration = time.time() - start_time
-                await _default_audit_logger.log_audit(action_name, f"Success in {duration:.2f}s. Args: {str(args)[:100]}")
+                with _db_path_lock:
+                    inst = _default_audit_logger
+                await inst.log_audit(action_name, f"Success in {duration:.2f}s. Args: {str(args)[:100]}")
                 return result
             except Exception as e:
                 duration = time.time() - start_time
-                await _default_audit_logger.log_audit(action_name, f"Failed in {duration:.2f}s. Error: {str(e)}")
+                with _db_path_lock:
+                    inst = _default_audit_logger
+                await inst.log_audit(action_name, f"Failed in {duration:.2f}s. Error: {str(e)}")
                 raise
         return wrapper
     return decorator
@@ -382,7 +408,9 @@ def audit_log(action_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Cal
 
 async def query_by_action(action: str, limit: int = 100) -> list[dict]:
     """查询指定操作类型的审计记录。DEPRECATED: Use AuditLogger.query_by_action()"""
-    return await _default_audit_logger.query_by_action(action, limit)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.query_by_action(action, limit)
 
 
 async def query_by_time_range(
@@ -391,24 +419,34 @@ async def query_by_time_range(
     limit: int = 100,
 ) -> list[dict]:
     """查询指定时间范围内的审计记录。DEPRECATED: Use AuditLogger.query_by_time_range()"""
-    return await _default_audit_logger.query_by_time_range(start_time, end_time, limit)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.query_by_time_range(start_time, end_time, limit)
 
 
 async def query_by_request_id(request_id: str) -> list[dict]:
     """查询指定请求 ID 的所有审计记录。DEPRECATED: Use AuditLogger.query_by_request_id()"""
-    return await _default_audit_logger.query_by_request_id(request_id)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.query_by_request_id(request_id)
 
 
 async def cleanup_old_entries(max_age_days: int = 90) -> int:
     """删除超过指定天数的审计记录。DEPRECATED: Use AuditLogger.cleanup_old_entries()"""
-    return await _default_audit_logger.cleanup_old_entries(max_age_days)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.cleanup_old_entries(max_age_days)
 
 
 async def rotate_audit_db(backup_path: str | None = None, max_age_days: int = 90) -> str | None:
     """Rotate the audit DB. DEPRECATED: Use AuditLogger.rotate_audit_db()"""
-    return await _default_audit_logger.rotate_audit_db(backup_path, max_age_days)
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.rotate_audit_db(backup_path, max_age_days)
 
 
 async def get_audit_stats() -> dict:
     """获取审计日志统计摘要。DEPRECATED: Use AuditLogger.get_audit_stats()"""
-    return await _default_audit_logger.get_audit_stats()
+    with _db_path_lock:
+        logger_instance = _default_audit_logger
+    return await logger_instance.get_audit_stats()

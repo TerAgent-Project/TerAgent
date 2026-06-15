@@ -17,6 +17,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+__all__ = [
+    "CodeIndexer",
+]
+
 import aiosqlite
 import tree_sitter_python as tsp
 from tree_sitter import Language, Parser

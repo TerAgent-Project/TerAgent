@@ -25,6 +25,12 @@ Usage:
         constraints=["Python 3.10+"],
         output_format_hint="<file path='...'>完整代码</file>",
     ))
+
+ModelProvider also supports the async context manager protocol for
+automatic resource cleanup:
+
+    async with create_provider(...) as provider:
+        response = await provider.execute_tap(request)
 """
 
 from __future__ import annotations
@@ -33,6 +39,10 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
+
+__all__ = [
+    "ModelProvider",
+]
 
 from teragent.core.adapter import TAPAdapter
 from teragent.core.compiler import TAPCompiler
@@ -56,6 +66,12 @@ class ModelProvider:
     The central class of the teragent library. Users specify a compiler
     (prompt compilation strategy) and an adapter (HTTP protocol), and
     the provider automatically combines them.
+
+    Supports the async context manager protocol so resources are
+    automatically closed when the block exits:
+
+        async with ModelProvider(compiler, adapter, model) as provider:
+            response = await provider.execute_tap(request)
 
     Attributes:
         compiler: TAPCompiler instance for prompt compilation
@@ -151,11 +167,12 @@ class ModelProvider:
         """
         compiled = CompiledPrompt(messages=messages, tools=tools or [])
         response = await self.adapter.send(compiled, self.model)
-        result = {"content": response.raw_text or ""}
-        # Propagate tool_calls from TAPResponse
-        result["tool_calls"] = response.tool_calls if response.tool_calls else []
-        result.setdefault("usage", response.usage if response.usage else {})
-        result.setdefault("finish_reason", response.finish_reason or "stop")
+        result = {
+            "content": response.raw_text or "",
+            "tool_calls": response.tool_calls if response.tool_calls else [],
+            "usage": response.usage if response.usage else {},
+            "finish_reason": response.finish_reason or "stop",
+        }
         return result
 
     def _validate_compiled_mode(self, compiled: CompiledPrompt) -> None:
@@ -215,7 +232,7 @@ class ModelProvider:
             pre_check = self._circuit_breaker.check_before_call(
                 estimated_prompt_tokens=request.estimate_prompt_tokens()
             )
-            if pre_check.level == "exhausted" and pre_check.max_tokens > 0:
+            if pre_check.level == "exhausted":
                 logger.error(f"TAP call blocked by budget: {pre_check.message}")
                 raise RuntimeError(f"Budget exhausted: {pre_check.message}")
 
@@ -236,8 +253,10 @@ class ModelProvider:
                     completion_tokens=response.completion_tokens,
                     latency_ms=latency,
                     success=True,
+                    cache_hit_tokens=response.cache_hit_tokens,
+                    cache_miss_tokens=response.cache_miss_tokens,
                 )
-                self._cost_tracker.append(record)
+                await self._cost_tracker.append(record)
 
                 # Record success in circuit breaker
                 if self._circuit_breaker is not None:
@@ -270,7 +289,7 @@ class ModelProvider:
                     success=False,
                     error=str(e),
                 )
-                self._cost_tracker.append(record)
+                await self._cost_tracker.append(record)
 
                 if self._circuit_breaker is not None:
                     self._circuit_breaker.record_failure(str(e))
@@ -281,10 +300,8 @@ class ModelProvider:
                 if attempt < max_retries:
                     await asyncio.sleep(retry_delay * (2 ** attempt))
 
-        if last_error is None:
-            raise RuntimeError(
-                "Unexpected state: no error recorded after all retries failed"
-            )
+        # last_error is guaranteed non-None here because every loop iteration
+        # that doesn't return/continue sets last_error before reaching this point.
         raise last_error
 
     # ===== Chat with fallback =====
@@ -350,14 +367,18 @@ class ModelProvider:
         """
         self._fallback = fallback
 
+    async def get_cost_records(self) -> list[TAPCostRecord]:
+        """Get all cost records"""
+        return await self._cost_tracker.get_all()
+
     @property
     def cost_records(self) -> list[TAPCostRecord]:
-        """Get all cost records"""
-        return self._cost_tracker.get_all()
+        """Get all cost records (sync, may not reflect latest async writes)"""
+        return list(self._cost_tracker._records)
 
-    def get_cost_summary(self) -> dict:
+    async def get_cost_summary(self) -> dict:
         """Get aggregated cost summary by provider"""
-        records = self._cost_tracker.get_all()
+        records = await self._cost_tracker.get_all()
         total_prompt = sum(r.prompt_tokens for r in records)
         total_completion = sum(r.completion_tokens for r in records)
         by_provider: dict[str, dict] = {}
@@ -391,6 +412,35 @@ class ModelProvider:
         await self.adapter.close()
         if self._fallback is not None:
             await self._fallback.close()
+
+    # ===== Async context manager =====
+
+    async def __aenter__(self) -> ModelProvider:
+        """Enter the async context manager — return self for use in ``async with``"""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
+    ) -> bool:
+        """Exit the async context manager — close resources and propagate exceptions
+
+        Always calls ``self.close()`` to release adapter connections.
+        Exceptions from the ``async with`` block are never suppressed
+        (returns ``False``).
+
+        Args:
+            exc_type: Exception type, or None if no exception was raised
+            exc_val: Exception value, or None
+            exc_tb: Exception traceback, or None
+
+        Returns:
+            False — never suppress exceptions
+        """
+        await self.close()
+        return False
 
     def __repr__(self) -> str:
         tracer_info = f", tracer={self._tracer!r}" if self._tracer else ""

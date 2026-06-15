@@ -16,6 +16,16 @@ import shutil
 import signal
 import sys
 
+__all__ = [
+    "BLOCKLIST_PATTERNS",
+    "CommandRiskLevel",
+    "DEFAULT_TIMEOUT",
+    "MAX_OUTPUT_SIZE",
+    "check_command_safety",
+    "classify_command_risk",
+    "execute_in_sandbox",
+]
+
 from teragent.utils.exceptions import SandboxViolation
 
 logger = logging.getLogger(__name__)
@@ -98,6 +108,26 @@ _DANGER_REDIRECT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r'\bumount\s', re.IGNORECASE),
 ]
 
+# --- Windows 危险命令（仅 Windows 平台生效） ---
+_WINDOWS_DANGEROUS_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r'\bformat\s+[A-Za-z]:', re.IGNORECASE),           # 格式化磁盘
+    re.compile(r'\bdel\s+/[sS]', re.IGNORECASE),                   # 递归删除
+    re.compile(r'\brd\s+/[sS]', re.IGNORECASE),                    # 递归删除目录
+    re.compile(r'\breg\s+(delete|add)\s+', re.IGNORECASE),         # 注册表操作
+    re.compile(r'\bnet\s+user\b', re.IGNORECASE),                  # 用户管理
+    re.compile(r'\bnet\s+localgroup\b', re.IGNORECASE),            # 用户组管理
+    re.compile(r'\bpowershell\s+-(enc|encodedcommand)\s', re.IGNORECASE),  # 编码执行绕过
+    re.compile(r'\bpwsh\s+-(enc|encodedcommand)\s', re.IGNORECASE),
+    re.compile(r'\bdiskpart\b', re.IGNORECASE),                    # 磁盘分区
+    re.compile(r'\bcipher\s+/w:', re.IGNORECASE),                  # 安全擦除
+    re.compile(r'\btaskkill\b', re.IGNORECASE),                    # 进程杀灭
+    re.compile(r'\bnetsh\b', re.IGNORECASE),                       # 网络配置
+    re.compile(r'\btakeown\b', re.IGNORECASE),                     # 取得所有权
+    re.compile(r'\bicacls\s+.*\/grant\b', re.IGNORECASE),          # 修改权限
+    re.compile(r'\bwmic\b', re.IGNORECASE),                        # WMI 命令
+    re.compile(r'\bschtasks\s+/(create|delete)\b', re.IGNORECASE), # 计划任务
+]
+
 # --- 包安装（需审批，但不硬拦截，仅警告） ---
 _PACKAGE_INSTALL_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r'\b(pip|pip3|conda)\s+install\b', re.IGNORECASE),
@@ -136,6 +166,7 @@ BLOCKLIST_PATTERNS: list[re.Pattern[str]] = (
     + _ENCODING_BYPASS_PATTERNS
     + _REMOTE_EXEC_PATTERNS
     + _DANGER_REDIRECT_PATTERNS
+    + (_WINDOWS_DANGEROUS_PATTERNS if sys.platform == "win32" else [])
 )
 
 MAX_OUTPUT_SIZE = 1_048_576  # 1MB
@@ -171,8 +202,11 @@ def _split_command_chain(cmd: str) -> list[str]:
 
     对 |、&&、||、; 连接的每个子命令独立检查，
     防止通过管道链绕过黑名单。
+
+    注意：不拆分单 &（后台运行），因为 & 不是命令链操作符。
+    单 & 的语义是“在后台运行”，拆分会改变命令含义。
     """
-    parts = re.split(r'\s*(?:\|{1,2}|&&|&|;)\s*', cmd)
+    parts = re.split(r'\s*(?:\|\|?|&&|;)\s*', cmd)
     return [p.strip() for p in parts if p.strip()]
 
 
@@ -250,6 +284,13 @@ def check_command_safety(cmd: str) -> tuple[bool, str]:
     # Layer 1: 命令规范化
     normalized = _normalize_command(cmd)
 
+    # Block background execution with bare &
+    if re.search(r'(?<!&)&(?!&)', normalized):
+        # Allow >& and 2>&1 redirect patterns
+        cleaned = re.sub(r'\d*>&\d*', '', normalized)
+        if re.search(r'(?<!&)&(?!&)', cleaned):
+            return False, "Background execution (&) is not allowed"
+
     # Layer 2: 管道链拆分，逐段检查
     sub_cmds = _split_command_chain(normalized)
 
@@ -260,15 +301,35 @@ def check_command_safety(cmd: str) -> tuple[bool, str]:
                 return False, f"命令匹配危险模式: {pattern.pattern}"
 
         # Layer 4: 危险重定向精细化检测
-        # 检测 > /etc/passwd 这类直接重定向
-        redirect_match = re.search(r'>{1,2}\s*(/\S+)', sub_cmd)
+        # Detect > target or >> target for any path (absolute or relative)
+        redirect_match = re.search(r'>{1,2}\s*(\S+)', sub_cmd)
         if redirect_match:
             target_path = redirect_match.group(1)
-            # 规范化路径
+            # Remove surrounding quotes if present
+            target_path = target_path.strip('\'"')
+            # Resolve relative paths against a hypothetical workspace
             target_path = os.path.normpath(target_path)
-            system_prefixes = ('/etc', '/dev', '/sys', '/proc', '/boot', '/root', '/sbin')
-            if any(target_path.startswith(p) for p in system_prefixes):
-                return False, f"重定向到系统关键路径: {target_path}"
+
+            # System prefixes to protect
+            system_prefixes = ['/etc', '/dev', '/sys', '/proc', '/boot', '/root', '/sbin']
+            if sys.platform == "win32":
+                system_root = os.environ.get("SystemRoot", r"C:\Windows").lower()
+                system_prefixes.extend([
+                    system_root,
+                    os.path.join(system_root, "system32"),
+                    os.path.join(system_root, "system"),
+                ])
+
+            # Check if target is an absolute system path
+            target_lower = target_path.lower() if sys.platform == "win32" else target_path
+            for prefix in system_prefixes:
+                prefix_lower = prefix.lower() if sys.platform == "win32" else prefix
+                if target_lower.startswith(prefix_lower):
+                    return False, f"重定向到系统关键路径: {target_path}"
+
+            # Check for path traversal in relative redirects
+            if '..' in target_path.split(os.sep):
+                return False, f"重定向路径包含目录穿越: {target_path}"
 
     # Layer 5: 跨管道链的危险组合检测
     # 某些危险模式只在完整命令中可见（如 curl | sh），拆分后各段都不触发
@@ -339,23 +400,52 @@ async def execute_in_sandbox(
             return await sandbox.run(cmd, timeout=timeout)
         except ImportError:
             logger.warning("FirecrackerSandbox not available, falling back to Level 1")
+            try:
+                from teragent.security.audit import log_audit
+                await log_audit(
+                    "sandbox_downgrade",
+                    f"Sandbox level downgraded from 2 to 1: FirecrackerSandbox not available (ImportError)"
+                )
+            except Exception:
+                pass  # Don't fail the sandbox operation if audit logging fails
             level = 1
         except RuntimeError as e:
             logger.warning(f"Firecracker not available ({e}), falling back to Level 1")
+            try:
+                from teragent.security.audit import log_audit
+                await log_audit(
+                    "sandbox_downgrade",
+                    f"Sandbox level downgraded from 2 to 1: Firecracker not available ({e})"
+                )
+            except Exception:
+                pass  # Don't fail the sandbox operation if audit logging fails
             level = 1
 
     if level >= 1:
         if not shutil.which("docker"):
             logger.warning("Docker not found, falling back to Level 0")
+            try:
+                from teragent.security.audit import log_audit
+                await log_audit(
+                    "sandbox_downgrade",
+                    "Sandbox level downgraded from 1 to 0: Docker not found"
+                )
+            except Exception:
+                pass  # Don't fail the sandbox operation if audit logging fails
             return await _execute_level_0(cmd, abs_workdir, timeout, max_output_size)
 
         # 1.3: Docker 模式下使用 shlex.quote 转义命令，防止双重注入
-        quoted_cmd = shlex.quote(cmd)
+        # 修复 H14: 使用唯一标签，避免清理时误杀其他实例的容器
+        import uuid
+        _docker_run_id = f"teragent_{uuid.uuid4().hex[:12]}"
+        quoted_cmd = shlex.quote(cmd) if sys.platform != "win32" else f'"{cmd}"'
         docker_cmd = [
             "docker", "run", "--rm",
             "--network=none",
+            f"--label=teragent_run={_docker_run_id}",
         ] + (
-            [f"--user={os.getuid()}:{os.getgid()}"] if hasattr(os, "getuid") else []
+            [f"--user={os.getuid()}:{os.getgid()}"] if hasattr(os, "getuid")
+            else (["--user", "ContainerUser"] if sys.platform == "win32" else [])
         ) + [
             "-v", f"{abs_workdir}:/workspace",
             "-w", "/workspace",
@@ -367,11 +457,17 @@ async def execute_in_sandbox(
         ]
         logger.info(f"Executing (Level 1 Docker): {cmd[:200]}")
         try:
+            _docker_kwargs: dict = {}
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _docker_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            else:
+                _docker_kwargs["start_new_session"] = True
             process = await asyncio.create_subprocess_exec(
                 *docker_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,  # 1.4: 进程组管理
+                **_docker_kwargs,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             output = _truncate_output(stdout.decode(errors='replace'), max_output_size)
@@ -383,13 +479,11 @@ async def execute_in_sandbox(
             # 1.4: 进程组杀灭
             _kill_process_group(process)
             # Force-remove the container to prevent orphaned containers after timeout.
-            # The container name/ID is not directly available, but since --rm is used,
-            # we attempt to find and remove any lingering containers from this command.
+            # 修复 H14: 使用唯一标签过滤，避免误杀其他实例的容器
             try:
                 find_cmd = [
                     "docker", "ps", "-q",
-                    "--filter", "volume=/workspace",
-                    "--filter", "ancestor=python:3.10-slim",
+                    f"--filter=label=teragent_run={_docker_run_id}",
                 ]
                 find_proc = await asyncio.create_subprocess_exec(
                     *find_cmd,
@@ -444,9 +538,16 @@ async def _execute_level_0(
     args: list[str] = []
 
     try:
-        args = shlex.split(cmd)
+        args = shlex.split(cmd, posix=not sys.platform.startswith("win"))
         # 如果 shlex 成功拆分且结果不含 shell 元字符特征，使用 exec 模式
-        if args and args[0] not in ("/bin/bash", "/bin/sh", "bash", "sh"):
+        _SHELL_EXECUTABLES = {"/bin/bash", "/bin/sh", "/bin/zsh", "bash", "sh", "zsh"}
+        if sys.platform == "win32":
+            _SHELL_EXECUTABLES.update({
+                "cmd.exe", "cmd",
+                "powershell.exe", "powershell",
+                "pwsh.exe", "pwsh",
+            })
+        if args and args[0] not in _SHELL_EXECUTABLES:
             use_exec = True
     except ValueError:
         # shlex 解析失败（不匹配的引号等），需要 shell 模式
@@ -455,22 +556,36 @@ async def _execute_level_0(
     try:
         if use_exec:
             # 使用 create_subprocess_exec — 无 shell 注入风险
+            _subprocess_kwargs: dict = {}
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _subprocess_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            else:
+                _subprocess_kwargs["start_new_session"] = True
+                if preexec_fn is not None:
+                    _subprocess_kwargs["preexec_fn"] = preexec_fn
             process = await asyncio.create_subprocess_exec(
                 *args, cwd=workdir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                preexec_fn=preexec_fn,
-                start_new_session=True,  # 1.4: 进程组管理
+                **_subprocess_kwargs,
             )
         else:
             # 回退到 shell 模式，但额外检查危险元字符
             _check_shell_metacharacters(cmd)
+            _subprocess_kwargs: dict = {}
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _subprocess_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            else:
+                _subprocess_kwargs["start_new_session"] = True
+                if preexec_fn is not None:
+                    _subprocess_kwargs["preexec_fn"] = preexec_fn
             process = await asyncio.create_subprocess_shell(
                 cmd, cwd=workdir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                preexec_fn=preexec_fn,
-                start_new_session=True,  # 1.4: 进程组管理
+                **_subprocess_kwargs,
             )
 
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
@@ -516,22 +631,41 @@ def _check_shell_metacharacters(cmd: str) -> None:
 
 
 def _kill_process_group(process: asyncio.subprocess.Process) -> None:
-    """杀灭整个进程组，消除孤儿进程
+    """杀灭整个进程组，消除孤儿进程（跨平台）
 
     1.4 改进:
-      - 优先使用 os.killpg 杀灭进程组（包含所有子进程）
+      - Unix: 优先使用 os.killpg 杀灭进程组（包含所有子进程）
+      - Windows: 使用 taskkill /F /T 杀灭进程树
       - 进程组不存在或无权限时回退到 process.kill()
     """
     try:
-        pgid = os.getpgid(process.pid)
-        if pgid != os.getpid():  # 不杀自己的进程组
-            os.killpg(pgid, signal.SIGKILL)
-            logger.debug(f"Killed process group {pgid} for pid {process.pid}")
+        if sys.platform == "win32":
+            # Windows: 使用 taskkill 杀灭整个进程树
+            import subprocess as _sp
+            try:
+                _sp.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                logger.debug(f"Killed process tree for pid {process.pid} via taskkill")
+            except (FileNotFoundError, _sp.TimeoutExpired, OSError) as e:
+                logger.debug(f"taskkill failed for pid {process.pid}: {e}, falling back to process.kill()")
+                try:
+                    process.kill()
+                except (ProcessLookupError, OSError):
+                    pass
         else:
-            process.kill()
+            # Unix: 杀灭进程组
+            pgid = os.getpgid(process.pid)
+            if pgid != os.getpid():  # 不杀自己的进程组
+                os.killpg(pgid, signal.SIGKILL)
+                logger.debug(f"Killed process group {pgid} for pid {process.pid}")
+            else:
+                process.kill()
     except (ProcessLookupError, PermissionError, OSError) as e:
         # 进程可能已退出，或无权限杀进程组
-        logger.debug(f"killpg failed for pid {process.pid}: {e}, falling back to process.kill()")
+        logger.debug(f"Kill failed for pid {process.pid}: {e}, falling back to process.kill()")
         try:
             process.kill()
         except (ProcessLookupError, OSError):

@@ -17,10 +17,22 @@ Extended for DeepSeek V4 / MiniMax M3 / GLM-5 deep adaptation:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import threading
 from dataclasses import dataclass, field
 from typing import Literal, Optional
+
+__all__ = [
+    "CompiledPrompt",
+    "CostTracker",
+    "DesktopContext",
+    "LongHorizonConfig",
+    "LongHorizonStatus",
+    "MultimodalContent",
+    "TAPCostRecord",
+    "TAPRequest",
+    "TAPResponse",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +76,9 @@ class MultimodalContent:
         elif self.type == "image_url":
             return {"type": "image_url", "image_url": {"url": self.url or ""}}
         elif self.type == "video_url":
-            return {"type": "video_url", "video_url": {"url": self.url or ""}}
+            # OpenAI API does not support "video_url" type natively;
+            # convert to "image_url" format for compatibility.
+            return {"type": "image_url", "image_url": {"url": self.url or ""}}
         elif self.type == "image_base64":
             media_type = self.media_type or "image/png"
             data_uri = f"data:{media_type};base64,{self.base64_data or ''}"
@@ -270,7 +284,7 @@ class TAPRequest:
         return self.long_horizon is not None
 
     @property
-    def effective_thinking_mode(self) -> Literal["deep", "quick"]:
+    def effective_thinking_mode(self) -> Literal["deep", "quick", "auto"]:
         """Resolve thinking_mode to a concrete value.
 
         If thinking_mode is None or "auto", the Compiler should decide.
@@ -297,7 +311,7 @@ class TAPResponse:
         long_horizon_status: Status update for long-horizon tasks (GLM-5)
     """
 
-    raw_text: str | None = ""
+    raw_text: str | None = None
     usage: dict = field(default_factory=dict)
     tool_calls: list[dict] = field(default_factory=list)
     finish_reason: str = ""
@@ -311,6 +325,12 @@ class TAPResponse:
     # --- GLM-5: Long-horizon status ---
     long_horizon_status: Optional[LongHorizonStatus] = None
 
+    # --- Adapter-specific extra data ---
+    # Populated by native adapters for model-specific response fields
+    # that don't map to standard TAPResponse attributes.
+    # E.g., GLM reasoning_content, content_filter, cached_tokens details.
+    extra: dict = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         """Log warning if raw_text is None (possible API error)"""
         if self.raw_text is None:
@@ -320,7 +340,11 @@ class TAPResponse:
             )
 
         # Extract cache_hit_tokens from usage if present (DeepSeek V4 API returns it there)
-        if self.usage and self.cache_hit_tokens == 0:
+        # Only auto-extract when the caller did NOT explicitly set cache_hit_tokens
+        # (i.e., it's still the default 0). Note: this means explicitly passing
+        # cache_hit_tokens=0 will be overridden if usage has prompt_cache_hit_tokens.
+        # Use __dict__ check to distinguish "not set" from "set to 0".
+        if self.usage and 'cache_hit_tokens' not in self.__dict__:
             self.cache_hit_tokens = self.usage.get("prompt_cache_hit_tokens", 0)
 
     @property
@@ -337,7 +361,14 @@ class TAPResponse:
 
     @property
     def cache_miss_tokens(self) -> int:
-        """Tokens that were NOT served from cache (prompt_tokens - cache_hit_tokens)"""
+        """Tokens that were NOT served from cache
+
+        Priority:
+        1. If usage dict contains 'prompt_cache_miss_tokens', use it (API-returned value)
+        2. Otherwise, compute as prompt_tokens - cache_hit_tokens
+        """
+        if self.usage and "prompt_cache_miss_tokens" in self.usage:
+            return self.usage.get("prompt_cache_miss_tokens", 0)
         return max(0, self.prompt_tokens - self.cache_hit_tokens)
 
 
@@ -443,53 +474,55 @@ class CompiledPrompt:
 
 
 class CostTracker:
-    """Thread-safe cost tracker for TAP calls
+    """Async-safe cost tracker for TAP calls
 
     支持缓存命中追踪和基于定价表的成本估算。
     cache_hit_tokens 通常比 cache_miss_tokens 便宜（DeepSeek V4 定价模型）。
+
+    Uses asyncio.Lock instead of threading.Lock to avoid blocking the event loop
+    in async contexts. All methods are now async.
     """
 
     def __init__(self) -> None:
         self._records: list[TAPCostRecord] = []
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
 
-    def append(self, record: TAPCostRecord) -> None:
-        with self._lock:
+    async def append(self, record: TAPCostRecord) -> None:
+        async with self._lock:
             self._records.append(record)
 
-    def get_all(self) -> list[TAPCostRecord]:
-        with self._lock:
+    async def get_all(self) -> list[TAPCostRecord]:
+        async with self._lock:
             return list(self._records)
 
-    def clear(self) -> None:
-        with self._lock:
+    async def clear(self) -> None:
+        async with self._lock:
             self._records.clear()
 
     def __len__(self) -> int:
-        with self._lock:
-            return len(self._records)
+        return len(self._records)
 
     # ----- 缓存命中统计方法 -----
 
-    def total_cache_hit_tokens(self) -> int:
+    async def total_cache_hit_tokens(self) -> int:
         """所有记录的缓存命中 token 总数
 
         Returns:
             所有 TAPCostRecord 的 cache_hit_tokens 之和
         """
-        with self._lock:
+        async with self._lock:
             return sum(r.cache_hit_tokens for r in self._records)
 
-    def total_cache_miss_tokens(self) -> int:
+    async def total_cache_miss_tokens(self) -> int:
         """所有记录的缓存未命中 token 总数
 
         Returns:
             所有 TAPCostRecord 的 cache_miss_tokens 之和
         """
-        with self._lock:
+        async with self._lock:
             return sum(r.cache_miss_tokens for r in self._records)
 
-    def cache_hit_rate(self) -> float:
+    async def cache_hit_rate(self) -> float:
         """缓存命中率（0.0 ~ 1.0）
 
         计算方式：cache_hit_tokens / (cache_hit_tokens + cache_miss_tokens)
@@ -498,7 +531,7 @@ class CostTracker:
         Returns:
             缓存命中率，范围 [0.0, 1.0]
         """
-        with self._lock:
+        async with self._lock:
             total_hit = sum(r.cache_hit_tokens for r in self._records)
             total_miss = sum(r.cache_miss_tokens for r in self._records)
             total_prompt = total_hit + total_miss
@@ -506,7 +539,7 @@ class CostTracker:
                 return 0.0
             return total_hit / total_prompt
 
-    def total_estimated_cost(self, pricing: dict) -> float:
+    async def total_estimated_cost(self, pricing: dict) -> float:
         """基于定价表估算总成本
 
         pricing 字典格式示例::
@@ -527,7 +560,7 @@ class CostTracker:
         Returns:
             估算总成本（货币单位与 pricing 一致）
         """
-        with self._lock:
+        async with self._lock:
             total_completion = sum(r.completion_tokens for r in self._records)
             total_hit = sum(r.cache_hit_tokens for r in self._records)
             total_miss = sum(r.cache_miss_tokens for r in self._records)

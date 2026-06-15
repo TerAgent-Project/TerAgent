@@ -8,7 +8,20 @@ import logging
 import os
 import shutil
 import signal
+import sys
+import tempfile
 import time
+import uuid
+
+__all__ = [
+    "DEFAULT_FIRECRACKER_PATH",
+    "DEFAULT_JAILER_PATH",
+    "DEFAULT_KERNEL_PATH",
+    "DEFAULT_MEM_SIZE_MIB",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_VCPU_COUNT",
+    "FirecrackerSandbox",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +60,13 @@ class FirecrackerSandbox:
         firecracker_path: str = DEFAULT_FIRECRACKER_PATH,
         jailer_path: str = DEFAULT_JAILER_PATH,
     ) -> None:
+        # Firecracker requires KVM — Linux-only
+        if sys.platform != "linux":
+            raise RuntimeError(
+                f"FirecrackerSandbox requires Linux with KVM support. "
+                f"Current platform: {sys.platform}"
+            )
+
         self.workspace_root = workspace_root
         self.vcpu_count = vcpu_count
         self.mem_size_mib = mem_size_mib
@@ -85,8 +105,8 @@ class FirecrackerSandbox:
         rootfs_path = self._prepare_rootfs()
 
         # 3. Generate config and start VM
-        self._vm_id = f"agent_vm_{os.getpid()}_{int(time.time())}"
-        self._config_path = f"/tmp/{self._vm_id}_config.json"
+        self._vm_id = f"agent_vm_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        self._config_path = os.path.join(tempfile.gettempdir(), f"{self._vm_id}_config.json")
 
         config = self._generate_config(cmd, rootfs_path)
         with open(self._config_path, "w") as f:
@@ -118,11 +138,17 @@ class FirecrackerSandbox:
         ]
 
         try:
+            _vm_kwargs: dict = {}
+            if sys.platform == "win32":
+                import subprocess as _sp
+                _vm_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            else:
+                _vm_kwargs["start_new_session"] = True
             process = await asyncio.create_subprocess_exec(
                 *jailer_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
+                **_vm_kwargs,
             )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
@@ -132,11 +158,18 @@ class FirecrackerSandbox:
         except asyncio.TimeoutError:
             logger.error(f"Firecracker VM timed out after {timeout}s")
             try:
-                pgid = os.getpgid(process.pid)
-                if pgid != os.getpid():
-                    os.killpg(pgid, signal.SIGKILL)
+                if sys.platform == "win32":
+                    import subprocess as _sp
+                    _sp.run(
+                        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                        capture_output=True, timeout=5,
+                    )
                 else:
-                    process.kill()
+                    pgid = os.getpgid(process.pid)
+                    if pgid != os.getpid():
+                        os.killpg(pgid, signal.SIGKILL)
+                    else:
+                        process.kill()
             except (ProcessLookupError, PermissionError, OSError):
                 try:
                     process.kill()

@@ -137,6 +137,8 @@ _COMPILER_INFERENCE_MAP: dict[str, str] = {
     "minimax": "minimax_m3",
     "minimax_m3": "minimax_m3",
     "glm_5": "glm_5",
+    "glm_52": "glm_52",
+    "glm-5.2": "glm_52",
     "step": "default",
     "gpt": "default",
     "qwen": "default",
@@ -395,7 +397,11 @@ def load_pipeline_config(config: dict[str, Any]) -> dict[str, str]:
         Dict with keys: "design", "plan", "execute", "review"
         Values are driver full_names (e.g., "openai_compatible.glm_5")
     """
-    pipeline = config.get("execution", {}).get("pipeline", {})
+    # 修复 H12: 添加 isinstance 检查，避免 config["execution"] 非字典时 AttributeError
+    execution_config = config.get("execution", {})
+    if not isinstance(execution_config, dict):
+        execution_config = {}
+    pipeline = execution_config.get("pipeline", {})
 
     result: dict[str, str] = {}
 
@@ -483,10 +489,40 @@ def load_full_config(config_path: str | None = None) -> dict[str, Any]:
         )
 
     if config_path is None:
-        # Search in project root, then CWD
+        # 搜索配置文件: CWD → 平台配置目录 → 项目源码根目录 → CWD默认
         _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        candidate = os.path.join(_project_root, "agent.toml")
-        config_path = candidate if os.path.exists(candidate) else "agent.toml"
+
+        # 构建搜索路径列表（按优先级排序）
+        search_paths = [
+            os.path.join(os.getcwd(), "agent.toml"),  # 当前工作目录
+        ]
+
+        # 平台特定配置目录
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA", "")
+            if appdata:
+                search_paths.append(os.path.join(appdata, "teragent", "agent.toml"))
+        elif sys.platform == "darwin":
+            search_paths.append(os.path.expanduser(
+                "~/Library/Application Support/teragent/agent.toml"
+            ))
+        else:
+            # Linux: XDG Base Directory
+            xdg_config = os.environ.get(
+                "XDG_CONFIG_HOME",
+                os.path.expanduser("~/.config"),
+            )
+            search_paths.append(os.path.join(xdg_config, "teragent", "agent.toml"))
+
+        # 项目源码根目录
+        search_paths.append(os.path.join(_project_root, "agent.toml"))
+
+        # 按顺序搜索，找到第一个存在的
+        config_path = "agent.toml"  # 最终回退
+        for candidate in search_paths:
+            if os.path.exists(candidate):
+                config_path = candidate
+                break
 
     if not os.path.exists(config_path):
         logger.warning(f"Config file {config_path} not found, using defaults.")

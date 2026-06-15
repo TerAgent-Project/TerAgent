@@ -53,6 +53,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+__all__ = [
+    "FileReadRecord",
+    "FileStateTracker",
+    "FileWriteRecord",
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -441,7 +447,7 @@ class FileStateTracker:
             logger.warning(f"_resolve_safe: path resolution failed: {filepath}: {e}")
             return None
 
-        return Path(abs_path)
+        return Path(resolved)
 
     def _quick_hash(self, filepath: Path) -> str:
         """计算文件哈希，采用采样策略平衡安全性和性能

@@ -9,6 +9,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+__all__ = [
+    "ProgressReport",
+    "ProgressTracker",
+]
+
 
 @dataclass
 class ProgressReport:

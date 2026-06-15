@@ -5,7 +5,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Version: 0.1.1](https://img.shields.io/badge/version-0.1.1-blue.svg)](https://github.com/teragent/teragent)
+[![Version: 0.1.2](https://img.shields.io/badge/version-0.1.2-blue.svg)](https://github.com/teragent/teragent)
 
 **English** | [中文](README_zh.md)
 
@@ -13,9 +13,9 @@
 
 TerAgent is a Python library for building production AI agent systems with a **compiler-adapter architecture**. It introduces **TAP IR** (Tool-Augmented Prompt Intermediate Representation) — a model-agnostic in-memory representation that separates *what to ask* from *how to format it*, enabling orthogonal composition of prompt compilers and protocol adapters.
 
-**9 Compilers** × **4 Adapters** = **36 model+protocol combinations**, each optimized for a specific pairing.
+**9 Compilers** × **5 Adapters** = **45 model+protocol combinations** (including test adapter), each optimized for a specific pairing.
 
-Now with **DeepSeek V4**, **MiniMax M3**, and **GLM-5** deep adaptation — intelligent multi-model routing, long-horizon autonomous tasks, native multimodal understanding, and desktop automation.
+Now with **DeepSeek V4**, **MiniMax M3**, **GLM-5**, and **GLM-5.2** deep adaptation — intelligent multi-model routing, long-horizon autonomous tasks, native multimodal understanding, dual thinking modes, and desktop automation.
 
 ---
 
@@ -23,7 +23,7 @@ Now with **DeepSeek V4**, **MiniMax M3**, and **GLM-5** deep adaptation — inte
 
 - [Documentation](docs/) — Full documentation with guides and API reference
 - [Why TerAgent](#why-teragent)
-- [Three-Model Deep Adaptation](#three-model-deep-adaptation)
+- [Four-Model Deep Adaptation](#four-model-deep-adaptation)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
   - [Single-Model](#single-model-quick-start)
@@ -32,6 +32,7 @@ Now with **DeepSeek V4**, **MiniMax M3**, and **GLM-5** deep adaptation — inte
   - [TAP IR](#tap-ir)
   - [Compiler × Adapter Combinations](#compiler--adapter-combinations)
   - [Data Flow](#data-flow)
+- [Cross-Platform Compatibility](#cross-platform-compatibility)
 - [Module Reference](#module-reference)
   - [Core (TAP IR + Compiler + Adapter)](#core-tap-ir--compiler--adapter)
   - [Router & Pipeline (Multi-Model)](#router--pipeline-multi-model)
@@ -70,9 +71,9 @@ Now with **DeepSeek V4**, **MiniMax M3**, and **GLM-5** deep adaptation — inte
 
 ---
 
-## Three-Model Deep Adaptation
+## Four-Model Deep Adaptation
 
-TerAgent now supports deep adaptation for three leading Chinese AI models, with intelligent routing that automatically selects the best model for each task:
+TerAgent now supports deep adaptation for four leading Chinese AI models, with intelligent routing that automatically selects the best model for each task:
 
 | Model | Role | Key Capabilities | Context Window |
 |-------|------|-----------------|----------------|
@@ -80,28 +81,33 @@ TerAgent now supports deep adaptation for three leading Chinese AI models, with 
 | **DeepSeek V4-Pro** | Complex reasoning | Deep thinking mode, cache optimization | 1M tokens |
 | **MiniMax M3** | Multimodal & desktop | Image/video understanding, desktop automation, MSA | 1M tokens |
 | **GLM-5** | Long-horizon & review | 8-hour autonomous tasks, self-evaluation, strategy switching | 200K tokens |
+| **GLM-5.2** | Ultra-long context & dual thinking | 1M context, High/Max dual thinking, PreservedThinking, 5V-Turbo vision coordination | 1M tokens |
 
 ### Feature Matrix
 
-| Feature | V4-Flash | V4-Pro | M3 | GLM-5 |
-|---------|----------|--------|----|---------|
-| Fast code generation | ✓✓✓ | ✓✓ | ✓ | ✓✓ |
-| Deep reasoning | — | ✓✓✓ | ✓ | ✓✓✓ |
-| Multimodal (image) | — | — | ✓✓✓ | — |
-| Video understanding | — | — | ✓✓✓ | — |
-| Desktop automation | — | — | ✓✓✓ | — |
-| Long-horizon tasks | — | — | — | ✓✓✓ |
-| Cache-aware pricing | ✓✓✓ | ✓✓✓ | — | — |
-| Cost efficiency | ✓✓✓ | ✓ | ✓ | ✓✓ |
+| Feature | V4-Flash | V4-Pro | M3 | GLM-5 | GLM-5.2 |
+|---------|----------|--------|----|---------|---------|
+| Fast code generation | ✓✓✓ | ✓✓ | ✓ | ✓✓ | ✓✓ |
+| Deep reasoning | — | ✓✓✓ | ✓ | ✓✓✓ | ✓✓✓ |
+| Dual thinking mode | — | — | — | — | ✓✓✓ |
+| PreservedThinking | — | — | — | — | ✓✓✓ |
+| Multimodal (image) | — | — | ✓✓✓ | — | ✓ (5V-Turbo) |
+| Video understanding | — | — | ✓✓✓ | — | — |
+| Desktop automation | — | — | ✓✓✓ | — | — |
+| Long-horizon tasks | — | — | — | ✓✓✓ | ✓✓✓ |
+| Vision→Code workflow | — | — | — | — | ✓✓✓ |
+| Cache-aware pricing | ✓✓✓ | ✓✓✓ | — | — | — |
+| 1M context window | ✓ | ✓ | ✓ | — | ✓ |
+| Cost efficiency | ✓✓✓ | ✓ | ✓ | ✓✓ | ✓✓ |
 
 ### Smart Routing (6 Steps)
 
 The `ModelRouter` automatically selects the optimal model through a 6-step decision flow:
 
-1. **Multimodal check** → Route visual/video content to M3
-2. **Context length** → Exclude models with insufficient context (>200K → V4/M3)
-3. **Long-horizon** → Route extended tasks to GLM-5
-4. **Intent matching** → Default routing table (design→V4-Pro, execute→V4-Flash, review→GLM-5)
+1. **Multimodal check** → Route visual/video content to M3 or GLM-5.2 + 5V-Turbo
+2. **Context length** → Exclude models with insufficient context (>200K → V4/M3/GLM-5.2)
+3. **Long-horizon** → Route extended tasks to GLM-5 or GLM-5.2
+4. **Intent matching** → Default routing table (design→V4-Pro, plan→GLM-5.2, execute→GLM-5.2, review→V4-Pro, chat→V4-Flash)
 5. **Cost evaluation** → Downgrade if monthly budget is constrained
 6. **Degradation** → Fall back if primary model is unavailable
 
@@ -111,19 +117,21 @@ Switch between named pipeline configurations at runtime:
 
 | Profile | Design | Plan | Execute | Review | Use Case |
 |---------|--------|------|---------|--------|----------|
-| `default` | V4-Pro | V4-Pro | V4-Flash | GLM-5 | Production |
+| `default` | V4-Pro | GLM-5.2 | GLM-5.2 | V4-Pro | Production |
 | `budget` | V4-Flash | V4-Flash | V4-Flash | V4-Flash | Development |
 | `multimodal` | M3 | M3 | M3 | M3 | Visual tasks |
-| `quality` | V4-Pro | GLM-5 | GLM-5 | V4-Pro | Critical tasks |
+| `deep_thinking` | GLM-5.2 Max | GLM-5.2 Max | GLM-5.2 Max | GLM-5.2 Max | Complex reasoning |
 
 ### Documentation
 
-- 📖 [Three-Model Adaptation Guide](docs/en/three_model_adaptation_guide.md) — Configuration, migration, best practices
+- 📖 [Four-Model Adaptation Guide](docs/en/adaptation_guide.md) — Configuration, migration, best practices
+- 📖 [GLM-5.2 Usage Guide](docs/en/glm_52_guide.md) — 1M context, dual thinking, PreservedThinking, 5V-Turbo
 - 📖 [Long-Horizon Task Guide](docs/en/long_horizon_guide.md) — 8-hour autonomous tasks
 - 📖 [Multimodal Guide](docs/en/multimodal_guide.md) — Image, video, desktop operations
 - 📖 [API Reference](docs/en/api-reference.md) — Full API documentation
 - 📖 [Configuration Manual](docs/en/configuration.md) — Complete agent.toml reference
-- 📖 [Evaluation Report](docs/EVALUATION_THREE_MODELS.md) — Three-model evaluation results
+- 📖 [Four-Model Evaluation Report](docs/EVALUATION_FOUR_MODELS.md) — Comprehensive benchmark results
+- 📖 [GLM-5.2 Stability Report](docs/glm_52_stability_report.md) — Production stability verification
 - 📖 [Ascend Deployment Guide](docs/deployment_guide_ascend.md) — Deploying on Huawei Ascend NPU
 
 ---
@@ -145,6 +153,8 @@ pip install teragent[dev]      # Development tools (pytest, ruff, mypy)
 ```
 
 **Requirements:** Python 3.10+. On Python 3.10, `tomli` is auto-installed for TOML config support.
+
+**Type Stubs:** TerAgent includes `.pyi` type stub files and a `py.typed` marker for PEP 561 compliance — IDE autocompletion and mypy type checking work out of the box.
 
 Optional components use lazy imports — `import teragent` always succeeds, and `ImportError` is raised only when an optional component is actually used without its extra installed.
 
@@ -184,6 +194,14 @@ driver_cfg = DriverConfig(
     compiler="glm_5",
 )
 provider = teragent.create_provider(**driver_cfg.to_create_provider_kwargs())
+
+# Method 4: Async context manager (auto-cleanup)
+async with teragent.create_provider(
+    compiler="glm_5", adapter="openai_compatible", model="glm-5",
+    base_url="https://open.bigmodel.cn/api/paas/v4",
+    api_key_env="GLM_API_KEY",
+) as provider:
+    response = await provider.execute_tap(teragent.TAPRequest(...))
 ```
 
 ### 2. Execute a TAP Request
@@ -264,7 +282,7 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 
 ### Multi-Model Quick Start
 
-Configure all three models for intelligent routing:
+Configure all four models for intelligent routing:
 
 ```toml
 # agent.toml
@@ -333,7 +351,7 @@ decision = router.route(request)
 # decision.selected_driver → "openai_compatible.minimax_m3"
 ```
 
-📖 See the [Three-Model Adaptation Guide](docs/en/three_model_adaptation_guide.md) for complete configuration and migration instructions.
+📖 See the [Four-Model Adaptation Guide](docs/en/adaptation_guide.md) for complete configuration and migration instructions.
 
 ---
 
@@ -375,6 +393,11 @@ TAP (TerAgent Protocol) is an in-memory intermediate representation — like LLV
 | `default` | `openai_compatible` | Generic OpenAI-protocol models | Standard chat messages |
 | `glm` | `openai_compatible` | GLM series (Zhipu AI) | Recency effect optimization — key instruction last |
 | `glm_5` | `openai_compatible` | GLM-5 (long-horizon) | Deep reasoning + long-horizon task support |
+| `glm_5` | `glm_native` | GLM-5 (native features) | Native thinking + cache + async chat |
+| `glm_52` | `openai_compatible` | GLM-5.2 (1M context, dual thinking) | 1M context optimization + High/Max dual thinking + PreservedThinking |
+| `glm_52` | `glm_native` | GLM-5.2 (native features) | Native thinking + cache + async + reasoning_content |
+| `glm_5v_turbo` | `openai_compatible` | GLM-5V-Turbo (vision) | Vision analysis + multimodal prompt |
+| `glm_5v_turbo` | `glm_native` | GLM-5V-Turbo (native vision) | Native vision API + image understanding |
 | `anthropic` | `openai_compatible` | Claude via OpenRouter | XML tag structured + recency |
 | `anthropic` | `anthropic_native` | Claude via Anthropic API | XML tags + system/user separation (Mode B) |
 | `deepseek` | `openai_compatible` | DeepSeek V3 models | Minimalist compilation |
@@ -382,6 +405,8 @@ TAP (TerAgent Protocol) is an in-memory intermediate representation — like LLV
 | `minimax_m3` | `openai_compatible` | MiniMax M3 (text) | MSA full-text injection |
 | `minimax_m3` | `minimax_native` | MiniMax M3 (multimodal/desktop) | Native multimodal + video + desktop + rate limit tracking |
 | `default` | `mock` | Testing | No HTTP calls |
+
+> **Note:** `deepseek_v4_flash` and `deepseek_v4_pro` are not separate compilers — they are variants of `deepseek_v4` set via the `variant` constructor parameter (`DeepSeekV4Compiler(variant="flash")` or `variant="pro"`).
 
 Adding a new model requires only a new Compiler class. Adding a new protocol requires only a new Adapter class. The two are composed orthogonally via `ModelProvider`.
 
@@ -411,6 +436,39 @@ User Input
 
 ---
 
+## Cross-Platform Compatibility
+
+TerAgent supports **Windows**, **macOS**, and **Linux** with platform-specific adaptations:
+
+| Feature | Windows | macOS | Linux |
+|---------|---------|-------|-------|
+| Sandbox Level 0 | ✅ `CREATE_NEW_PROCESS_GROUP` | ✅ `start_new_session` | ✅ `start_new_session` + `preexec_fn` |
+| Sandbox Level 1 (Docker) | ✅ `ContainerUser` | ✅ uid/gid mapping | ✅ uid/gid mapping |
+| Sandbox Level 2 (Firecracker) | ❌ KVM required | ❌ KVM required | ✅ Full support |
+| Process tree kill | ✅ `taskkill /F /T` | ✅ `os.killpg()` | ✅ `os.killpg()` |
+| Windows dangerous commands | ✅ 16 patterns blocked | N/A | N/A |
+| Windows system path protection | ✅ `C:\Windows`, `Program Files`, etc. | N/A | N/A |
+| Clipboard (X11) | N/A | ✅ `pbcopy`/`pbpaste` | ✅ `xclip` |
+| Clipboard (Wayland) | N/A | N/A | ✅ `wl-copy`/`wl-paste` |
+| Screenshot | ✅ PIL ImageGrab | ✅ PIL ImageGrab | ✅ `mss` preferred |
+| Screen size | ✅ `ctypes` fallback | ✅ `AppKit` fallback | ✅ `mss`/`pyautogui` |
+| Config search | `%APPDATA%\teragent\` | `~/Library/Application Support/teragent/` | `~/.config/teragent/` (XDG) |
+| `.env` search | CWD → `~/.env` → project | CWD → `~/.env` → project | CWD → `~/.env` → project |
+| File atomic write | ✅ 3-step rename + backup | ✅ Atomic `os.replace()` | ✅ Atomic `os.replace()` |
+| `shlex` parsing | ✅ `posix=False` | ✅ `posix=True` | ✅ `posix=True` |
+| HTTP/2 | ✅ Configurable (default off) | ✅ Configurable | ✅ Configurable |
+| SSL verify | ✅ Custom CA support | ✅ Custom CA support | ✅ Custom CA support |
+
+### Key Cross-Platform Features
+
+- **Process Management**: Windows uses `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T`; Unix uses `start_new_session` + `os.killpg()`
+- **Command Safety**: Platform-specific dangerous command blacklists — Unix (`sudo`, `rm -rf /`, `/etc/`) and Windows (`format C:`, `reg delete`, `powershell -enc`, `taskkill`)
+- **File Writes**: POSIX uses atomic `os.replace()`; Windows NTFS uses rename-rename-delete 3-step pattern with backup/rollback
+- **Desktop Clipboard**: Auto-detects Wayland vs X11 on Linux; uses `pbcopy` on macOS; `clip` on Windows
+- **Config Paths**: Searches platform-standard directories (XDG, AppData, Application Support) in addition to CWD and project root
+
+---
+
 ## Module Reference
 
 ### Core (TAP IR + Compiler + Adapter)
@@ -424,25 +482,32 @@ User Input
 | `teragent.core.types` | `Message`, `MessageRole`, `MessageType`, `ToolSafety` | Internal message types and tool safety enumeration (`READ_ONLY`, `SAFE_WRITE`, `DESTRUCTIVE`, `HIGH_RISK`) |
 | `teragent.core.compilers.default` | `DefaultCompiler` | Generic OpenAI-compatible prompt compilation |
 | `teragent.core.compilers.glm` | `GLMCompiler` | GLM-optimized: recency effect (key instruction last) |
+| `teragent.core.compilers.glm_5` | `GLM5Compiler` | GLM-5: recency effect + 200K extreme compression + long-horizon task support |
+| `teragent.core.compilers.glm_52` | `GLM52Compiler` | GLM-5.2: 1M context optimization + High/Max dual thinking + PreservedThinking |
+| `teragent.core.compilers.glm_5v_turbo` | `GLM5VTurboCompiler` | GLM-5V-Turbo: vision analysis + multimodal prompt optimization |
 | `teragent.core.compilers.anthropic` | `AnthropicCompiler` | Claude-optimized: XML tag structure + Mode B (system/user separation) |
 | `teragent.core.compilers.deepseek` | `DeepSeekCompiler` | DeepSeek-optimized: minimalist prompt format |
+| `teragent.core.compilers.deepseek_v4` | `DeepSeekV4Compiler` | DeepSeek V4: cache-aware layout + thinking mode + Flash/Pro variants + 1M context |
+| `teragent.core.compilers.minimax_m3` | `MiniMaxM3Compiler` | MiniMax M3: multimodal + MSA full-text injection + desktop ops |
 | `teragent.core.adapters.openai_compatible` | `OpenAICompatibleAdapter` | OpenAI `/chat/completions` protocol with SSE streaming |
 | `teragent.core.adapters.anthropic_native` | `AnthropicNativeAdapter` | Anthropic `/messages` protocol with Anthropic-specific SSE |
+| `teragent.core.adapters.glm_native` | `GLMNativeAdapter` | GLM native API: thinking + cache + async chat + reasoning_content |
+| `teragent.core.adapters.minimax_native` | `MiniMaxNativeAdapter` | MiniMax M3 native: Anthropic-compatible + OpenAI dual interface + video + desktop |
 | `teragent.core.adapters.mock` | `MockAdapter` | Testing adapter — no HTTP calls |
-| `teragent.core.prompts` | `get_system_prompt_for_intent()`, `list_intents()`, `list_compiler_types()` | Centralized prompt management: 9 intents × 4 compiler variants |
+| `teragent.core.prompts` | `get_system_prompt_for_intent()`, `list_intents()`, `list_compiler_types()` | Centralized prompt management: 9 intents × 9 compiler variants |
 
 **Prompt intents:** `design`, `plan`, `replan`, `execute`, `review`, `chat`, `chat_friendly`, `sub_agent`, `code_generation` (alias for `execute`)
 
-**Compiler types:** `default`, `glm`, `glm_5`, `anthropic`, `deepseek`, `deepseek_v4`, `minimax_m3`
+**Compiler types:** `default`, `glm`, `glm_5`, `glm_52`, `glm_5v_turbo`, `anthropic`, `deepseek`, `deepseek_v4`, `minimax_m3`
 
 ### Router & Pipeline (Multi-Model)
 
 | Component | Description |
 |-----------|-------------|
-| `ModelRouter` | 6-step intelligent routing (intent→multimodal→context→long-horizon→cost→degradation) |
+| `ModelRouter` | 6-step intelligent routing (multimodal→context→long-horizon→intent→cost→degradation) |
 | `RoutingTable` | Configurable routing rules with intent defaults and override maps |
 | `RoutingDecision` | Captures routing choice with full trace for debugging |
-| `PipelineManager` | Runtime pipeline profile switching (default/budget/multimodal/quality) |
+| `PipelineManager` | Runtime pipeline profile switching (default/budget/multimodal/deep_thinking) |
 | `PipelineProfile` | Named stage→driver mapping for quick configuration |
 
 ### Long-Horizon Tasks
@@ -466,7 +531,19 @@ User Input
 | `CostRecord` | Per-call cost record with cache savings tracking |
 | `ModelCircuitBreakerManager` | Per-model circuit breakers with degradation chains |
 | `DegradationChain` | Task-type-aware fallback ordering (heavy/multimodal/default) |
-| `RateLimitHandler` | Unified rate limit handling across V4/M3/GLM-5 providers |
+| `RateLimitHandler` | Legacy per-adapter rate limit handling (see `RateLimiter` for centralized abstraction) |
+
+### Rate Limiting
+
+| Component | Description |
+|-----------|-------------|
+| `TokenBucketRateLimiter` | Token bucket rate limiter — allows bursty traffic, then refills at steady rate |
+| `SlidingWindowRateLimiter` | Sliding window rate limiter — tracks request timestamps within a time window |
+| `AdaptiveRateLimiter` | Adaptive rate limiter — learns from `X-RateLimit-*` and `Retry-After` response headers, auto-adjusts on 429s |
+| `RateLimitConfig` | Configuration for all strategies (token-bucket, sliding-window, adaptive) |
+| `RateLimitStrategy` | Strategy enum: `TOKEN_BUCKET`, `SLIDING_WINDOW`, `ADAPTIVE` |
+| `RateLimitStatus` | Current rate limit status with `is_limited` and `wait_seconds` properties |
+| `create_rate_limiter()` | Factory function — creates the appropriate limiter based on config |
 
 ### Pipeline Primitives
 
@@ -595,6 +672,8 @@ Layer 5: Cross-chain detection    ← curl | sh, wget | python (visible only in 
 Layer 6: Package install warning  ← pip/npm/apt install → log warning, no hard block
 ```
 
+**Cross-platform extensions:** + platform-specific patterns (Windows 16-pattern blacklist, Windows system path protection)
+
 #### 2-Phase Commit (2PC) File Writes
 
 ```
@@ -610,6 +689,7 @@ Phase 4: Rollback  → on any commit failure, restore from .bak backups
 - **Consistent**: all files commit or none do (transactional)
 - **Concurrent-safe**: readers never see half-written state
 - **Path traversal protection**: all paths must be within `workspace_root`
+- **NTFS fallback**: with NTFS 3-step fallback (rename-rename-delete with backup/rollback on Windows)
 
 #### 3-Level Sandbox Degradation
 
@@ -618,6 +698,8 @@ Phase 4: Rollback  → on any commit failure, restore from .bak backups
 | Level 2 | Firecracker microVM | → Docker (Level 1) |
 | Level 1 | Docker container (512MB, 1 CPU, 64 PIDs) | → subprocess (Level 0) |
 | Level 0 | Subprocess with `rlimit` + `create_subprocess_exec` | — |
+
+**Cross-platform process management:** Windows uses `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T`; Unix uses `start_new_session` + `os.killpg()`
 
 ### Reliability System
 
@@ -780,7 +862,7 @@ TerAgent uses a typed configuration system backed by `agent.toml` files.
 
 ## Configuration
 
-Create an `agent.toml` in your project root:
+Create an `agent.toml` in your project root (see `examples/agent.toml` for a complete example):
 
 ```toml
 [drivers.openai_compatible.glm_5]
@@ -825,9 +907,9 @@ Every line of code in TerAgent was generated by AI — not a single line was wri
 - **Code**: I instructed GLM-5 via natural language to generate code module by module, strictly following the plan.
 - **Review**: I directed AI to perform syntax checks, dependency validation, and runnability tests. Based on the feedback, I accepted, revised, or rejected the output.
 
-After the above pipeline, AI automatically compiled the project statistics: ~22,207 lines of Python code (14 sub-modules, 83 source files), ~15,071 lines of tests (44 test files), a test-to-source ratio of 67.9%, version 0.1.1 Beta, license Apache-2.0. These figures were also AI-generated.
+After the above pipeline, AI automatically compiled the project statistics: ~46,900 lines of Python code (17 sub-modules, 99 source files), ~28,300 lines of tests (61 test files), a test-to-source ratio of 60.4%, version 0.1.2 Beta, license Apache-2.0. These figures were also AI-generated.
 
-After publication, GLM-5 conducted an independent third-party evaluation of the entire codebase in a separate session, awarding an overall score of **7.4/10** (Architecture 9.0, Anti-Hallucination Security 7.5, Engineering Standards 6.5). The evaluation identified the core innovation as the TAP IR + Compiler/Adapter orthogonal composition, noted that the security architecture is essentially an "anti-AI-self-destruction" system, and flagged the main gaps: missing intent-action consistency checks, sandbox degradation requiring user confirmation, and no CI/CD. The full Three-Model Evaluation report is available at [`docs/EVALUATION_THREE_MODELS.md`](docs/EVALUATION_THREE_MODELS.md) (also AI-generated).
+After publication, GLM-5 conducted an independent third-party evaluation of the entire codebase in a separate session, awarding an overall score of **7.4/10** (Architecture 9.0, Anti-Hallucination Security 7.5, Engineering Standards 6.5). The evaluation identified the core innovation as the TAP IR + Compiler/Adapter orthogonal composition, noted that the security architecture is essentially an "anti-AI-self-destruction" system, and flagged the main gaps: missing intent-action consistency checks, sandbox degradation requiring user confirmation, and no CI/CD. The evaluation reports are available at [`docs/EVALUATION_THREE_MODELS.md`](docs/EVALUATION_THREE_MODELS.md) (three-model) and [`docs/EVALUATION_FOUR_MODELS.md`](docs/EVALUATION_FOUR_MODELS.md) (four-model, also AI-generated).
 
 This development methodology is itself part of TerAgent: the `pipeline` module provides a reusable **Design → Plan → Code → Review** workflow.
 

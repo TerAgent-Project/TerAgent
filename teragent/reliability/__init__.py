@@ -5,14 +5,19 @@ Exports all public names from circuit_breaker, budget, and recovery modules.
 Components:
     - CircuitBreakerManager: 4-type circuit breaker (budget, failure, latency, progress)
     - ModelCircuitBreakerManager: Per-model circuit breakers with cross-model degradation (P4-3)
+    - FourModelCircuitBreakerManager: Four-model architecture circuit breakers (P4-3)
     - StepBudget: Step-level budget tracking
     - CrossModelCostTracker: Multi-model cost tracking with monthly budget control
     - CostRecord: Individual cost record with cache savings
     - MonthlyBudgetConfig: Monthly budget configuration
     - RecoveryManager: Error recovery + model degradation strategies
     - DegradationChain: Cross-model degradation chain with health awareness (P4-3)
+    - CrossModelDegradationChain: Four-model degradation chain with event logging (P4-3)
     - LongHorizonRecoveryManager: Long-horizon task fault recovery (P4-3)
+    - LongHorizonRecovery: Standalone long-horizon recovery primitives (P4-3)
     - RateLimitHandler: Unified rate limiting across models (P4-3)
+    - FourModelRateLimitHandler: Enhanced rate limiting with proactive throttling (P4-3)
+    - GLM52ContextStabilityRecovery: GLM-5.2 1M context stability recovery (P4-3)
 """
 
 from teragent.reliability.budget import (
@@ -35,6 +40,10 @@ from teragent.reliability.circuit_breaker import (
     ModelBreakerState,
     ModelCircuitBreakerManager,
     ProgressDetector,
+    # P4-3: Four-model circuit breaker
+    ModelCircuitBreakerConfig,
+    FOUR_MODEL_BREAKER_CONFIGS,
+    FourModelCircuitBreakerManager,
 )
 from teragent.reliability.recovery import (
     # P4-3: Fault recovery enhancement
@@ -48,6 +57,17 @@ from teragent.reliability.recovery import (
     RecoveryType,
     is_context_overflow_error,
     is_retryable_error,
+    # P4-3: Four-model fault recovery
+    DegradationEvent,
+    CrossModelDegradationChain,
+    CheckpointData,
+    PartialResult,
+    LongHorizonRecovery,
+    ProviderRateLimitConfig,
+    ModelRateLimitState,
+    FourModelRateLimitHandler,
+    ContextStabilityMetrics,
+    GLM52ContextStabilityRecovery,
 )
 
 __all__ = [
@@ -64,6 +84,10 @@ __all__ = [
     "ModelBreakerConfig",
     "ModelBreakerState",
     "ModelCircuitBreakerManager",
+    # circuit_breaker (P4-3 — four-model)
+    "ModelCircuitBreakerConfig",
+    "FOUR_MODEL_BREAKER_CONFIGS",
+    "FourModelCircuitBreakerManager",
     # budget
     "DEFAULT_MAX_STEPS",
     "StepBudget",
@@ -82,4 +106,15 @@ __all__ = [
     "LongHorizonRecoveryManager",
     "RateLimitInfo",
     "RateLimitHandler",
+    # recovery (P4-3 — four-model)
+    "DegradationEvent",
+    "CrossModelDegradationChain",
+    "CheckpointData",
+    "PartialResult",
+    "LongHorizonRecovery",
+    "ProviderRateLimitConfig",
+    "ModelRateLimitState",
+    "FourModelRateLimitHandler",
+    "ContextStabilityMetrics",
+    "GLM52ContextStabilityRecovery",
 ]

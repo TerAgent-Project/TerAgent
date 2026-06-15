@@ -239,8 +239,14 @@ class TerAgentConfig:
                 raw = tomllib.load(f)
             return cls.from_dict(raw)
         except Exception as e:
-            logger.error(f"Failed to load config from {config_path}: {e}")
-            return cls()
+            logger.warning(
+                f"Failed to load config from {config_path}: {e}. "
+                f"Using all-default config — this may not be intended. "
+                f"Please fix the config file or remove it to suppress this warning."
+            )
+            instance = cls()
+            instance._raw["_load_error"] = str(e)
+            return instance
 
     def validate(self) -> list[str]:
         """Validate configuration values, return warning list.
@@ -449,6 +455,16 @@ class TerAgentConfig:
                     "extra_headers": dc.extra_headers,
                     "full_name": dc.full_name,
                     "enable_fake_tools": dc.enable_fake_tools,
+                    # Extended fields for DeepSeek V4 / MiniMax M3 / GLM-5
+                    "compiler_variant": dc.compiler_variant,
+                    "max_context_tokens": dc.max_context_tokens,
+                    "max_output_tokens": dc.max_output_tokens,
+                    "thinking_mode": dc.thinking_mode,
+                    "cache_aware": dc.cache_aware,
+                    "multimodal_enabled": dc.multimodal_enabled,
+                    "desktop_enabled": dc.desktop_enabled,
+                    "long_horizon_enabled": dc.long_horizon_enabled,
+                    "msa_efficient": dc.msa_efficient,
                 }
                 for name, dc in self.drivers.items()
             },

@@ -133,19 +133,21 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 
 ## 可用的编译器和适配器
 
-### Compilers
+### 编译器
 
 | Compiler | 优化策略 | 目标模型 |
-|----------|---------|---------|
+|----------|---------|----------|
 | `default` | 标准聊天消息 | 通用 OpenAI 协议模型 |
 | `glm` | 近因效应（关键指令置末） | GLM 系列（智谱 AI） |
-| `anthropic` | XML 标签结构化 + Mode B | Claude 系列 |
-| `deepseek` | 极简编译 | DeepSeek 模型 |
-| `deepseek_v4` | 缓存感知布局 + 思考模式 + 1M 上下文优化 | DeepSeek V4-Flash/Pro |
-| `deepseek_v4_flash` | 极简提示词，快速响应 | DeepSeek V4-Flash |
-| `deepseek_v4_pro` | 完整提示词 + 深度推理 | DeepSeek V4-Pro |
 | `glm_5` | 近因效应 + 长时任务 + 自我评估 | GLM-5 |
-| `minimax_m3` | MSA 全文注入 + 多模态 | MiniMax M3 |
+| `glm_52` | 1M 上下文 + 双思考模式（High/Max）+ PreservedThinking + 5V-Turbo 协调 | GLM-5.2 |
+| `glm_5v_turbo` | GLM-5V-Turbo 视觉分析 | GLM-5V-Turbo（视觉模型） |
+| `anthropic` | XML 标签结构化 + Mode B | Claude 系列 |
+| `deepseek` | 极简编译 | DeepSeek V3 模型 |
+| `deepseek_v4` | 缓存感知布局 + 思考模式 + 1M 上下文优化 | DeepSeek V4-Flash/Pro（通过 `compiler_variant` 控制变体） |
+| `minimax_m3` | MSA 全文注入 + 多模态 + 桌面上下文 | MiniMax M3 |
+
+> **注意：** `deepseek_v4_flash` 和 `deepseek_v4_pro` **不是**独立的编译器 —— 它们是 `deepseek_v4` 的变体，通过 `compiler_variant` 参数（`"flash"` 或 `"pro"`）控制。
 
 ### Adapters
 
@@ -153,22 +155,25 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 |---------|------|------|
 | `openai_compatible` | OpenAI `/chat/completions` + SSE | 适用于 GLM、DeepSeek、OpenRouter 等 |
 | `anthropic_native` | Anthropic `/messages` + Anthropic SSE | 直连 Anthropic API |
+| `glm_native` | 智谱 AI 原生 API | GLM-5/5.2 智谱 AI 特定优化 |
 | `minimax_native` | MiniMax 原生 API + 速率限制追踪 | MiniMax M3 多模态/桌面自动化 |
 | `mock` | 无 HTTP 调用 | 用于测试 |
 
-### Valid Combinations
+### 有效组合
 
 | Compiler | Adapter | 目标 | 提示策略 |
-|----------|---------|------|---------|
+|----------|---------|------|----------|
 | `default` | `openai_compatible` | 通用 OpenAI 协议模型 | 标准聊天消息 |
 | `glm` | `openai_compatible` | GLM 系列（智谱 AI） | 近因效应优化 |
 | `glm_5` | `openai_compatible` | GLM-5（长时任务） | 深度推理 + 长时任务支持 |
+| `glm_5` | `glm_native` | GLM-5 通过智谱 AI 原生 API | 深度推理 + 原生优化 |
+| `glm_52` | `openai_compatible` | GLM-5.2（1M + 双思考） | 1M 上下文 + PreservedThinking + 5V-Turbo 协调 |
+| `glm_52` | `glm_native` | GLM-5.2 通过智谱 AI 原生 API | 1M 上下文 + 原生优化 |
+| `glm_5v_turbo` | `openai_compatible` | GLM-5V-Turbo（视觉） | 视觉分析编译 |
 | `anthropic` | `openai_compatible` | 通过 OpenRouter 的 Claude | XML 标签 + 近因效应 |
 | `anthropic` | `anthropic_native` | 通过 Anthropic API 的 Claude | XML 标签 + system/user 分离 (Mode B) |
 | `deepseek` | `openai_compatible` | DeepSeek V3 模型 | 极简编译 |
-| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | 缓存感知布局 + 思考模式 |
-| `deepseek_v4_flash` | `openai_compatible` | DeepSeek V4-Flash | 极简提示词，快速响应 |
-| `deepseek_v4_pro` | `openai_compatible` | DeepSeek V4-Pro | 完整提示词 + 深度推理 |
+| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | 缓存感知布局 + 思考模式（变体：flash/pro） |
 | `minimax_m3` | `openai_compatible` | MiniMax M3（文本） | MSA 全文注入 |
 | `minimax_m3` | `minimax_native` | MiniMax M3（多模态/桌面） | 原生多模态 + 速率限制追踪 |
 | `default` | `mock` | 测试 | 无 HTTP 调用 |
@@ -180,3 +185,7 @@ tracer.export_dpo_pairs_jsonl()  # 写入 JSONL 文件
 - [配置指南](configuration.md) — agent.toml 与类型化配置
 - [API 参考](api-reference.md) — 完整模块参考
 - [自强化学习指南](self-rl.md) — TAP 追踪与 DPO 对生成
+- [四模型适配指南](adaptation_guide.md) — DeepSeek V4、MiniMax M3、GLM-5、GLM-5.2 配置与最佳实践
+- [GLM-5.2 使用指南](../en/glm_52_guide.md)（英文） — 1M 上下文、双思考模式、PreservedThinking、5V-Turbo 视觉协调
+- [多模态指南](../en/multimodal_guide.md)（英文） — MiniMax M3 图像、视频和桌面操作
+- [长时任务指南](../en/long_horizon_guide.md)（英文） — GLM-5/5.2 8小时+自主任务

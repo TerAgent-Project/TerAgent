@@ -11,12 +11,18 @@ This is a library core primitive: TAP request assembly → execute_tap →
 file extraction → safe write → sandbox execution. No EventBus dependency.
 """
 import asyncio
+import fcntl
 import json
 import logging
 import os
 import re
 import time
+import uuid
 from typing import TYPE_CHECKING
+
+__all__ = [
+    "SubAgentWorker",
+]
 
 from teragent.core.provider import ModelProvider
 from teragent.core.tap import TAPRequest
@@ -75,12 +81,25 @@ def _sync_append_trace(trace_file: str, record: dict) -> None:
 
     DEPRECATED: This is kept for backward compatibility. New code should
     use TAPTracer.record_request() / record_response() instead (Phase 10).
+
+    Uses file locking (fcntl) on Unix to prevent write corruption from
+    concurrent workers writing to the same trace file.
     """
     try:
         with open(trace_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass  # Locking not available on this platform
+            try:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except (ImportError, OSError):
+                    pass
     except (TypeError, ValueError) as e:
         # Best-effort: if record contains non-serializable objects,
         # convert them to strings via default=str; if that also fails,
@@ -164,7 +183,7 @@ class SubAgentWorker:
         # --- Trace directory preparation (legacy fallback) ---
         trace_dir = os.path.join(self.workspace_root, ".agent", "traces")
         os.makedirs(trace_dir, exist_ok=True)
-        trace_file = os.path.join(trace_dir, f"{self.task_id}_{int(time.time())}.jsonl")
+        trace_file = os.path.join(trace_dir, f"{self.task_id}_{uuid.uuid4().hex[:8]}.jsonl")
 
         try:
             # Classify task type: command_only / code_generation / mixed

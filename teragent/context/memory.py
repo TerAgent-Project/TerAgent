@@ -1,8 +1,16 @@
-# teragent/context/memory.py
+"""teragent.context.memory — AGENT.md 读写工具"""
+
 import logging
 import os
 import re
 from datetime import datetime, timezone
+
+__all__ = [
+    "extract_rules",
+    "load_agent_md",
+    "merge_agent_md",
+    "save_agent_md",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +55,8 @@ def save_agent_md(project_root: str, content: str) -> bool:
 def merge_agent_md(project_root: str, section_title: str, content: str) -> bool:
     """Append a new section to AGENT.md. If the file doesn't exist, create it.
 
-    The new section is appended at the end of the file with a markdown
-    heading and a timestamp comment.
+    If a section with the same title already exists, it is replaced
+    (updated) rather than duplicated.
 
     Args:
         project_root: The project root directory containing AGENT.md.
@@ -67,6 +75,16 @@ def merge_agent_md(project_root: str, section_title: str, content: str) -> bool:
             f"<!-- added {timestamp} -->\n\n"
             f"{content}\n"
         )
+
+        # Check if a section with the same title already exists and replace it
+        section_pattern = re.compile(
+            rf"^\n*\n## {re.escape(section_title)}\n.*(?=^\n## |\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+        if section_pattern.search(existing):
+            existing = section_pattern.sub(new_section, existing)
+            return save_agent_md(project_root, existing)
+
         return save_agent_md(project_root, existing + new_section)
     except Exception as e:
         logger.error(f"Failed to merge into AGENT.md: {e}")

@@ -94,7 +94,7 @@ import teragent.core.adapters  # noqa: F401 — registers: openai_compatible, an
 # ============================================================================
 # Trigger compiler/adapter registration
 # ============================================================================
-import teragent.core.compilers  # noqa: F401 — registers: default, glm, anthropic, deepseek, deepseek_v4, deepseek_v4_flash, deepseek_v4_pro, glm_5, minimax_m3
+import teragent.core.compilers  # noqa: F401 — registers: default, glm, anthropic, deepseek, deepseek_v4, deepseek_v4_flash, deepseek_v4_pro, glm_5, glm_52, minimax_m3
 
 # ============================================================================
 # AgentLoop — central orchestration class
@@ -192,6 +192,7 @@ from teragent.core.compilers import (
     DeepSeekCompiler,
     DeepSeekV4Compiler,
     DefaultCompiler,
+    GLM52Compiler,
     GLM5Compiler,
     GLMCompiler,
     MiniMaxM3Compiler,
@@ -265,6 +266,20 @@ from teragent.core.prompts import get_system_prompt_for_intent as _get_system_pr
 
 # ModelProvider (Compiler + Adapter composition)
 from teragent.core.provider import ModelProvider
+
+# ============================================================================
+# Rate limiting
+# ============================================================================
+from teragent.core.rate_limiter import (
+    AdaptiveRateLimiter,
+    RateLimitConfig,
+    RateLimiter,
+    RateLimitStatus,
+    RateLimitStrategy,
+    SlidingWindowRateLimiter,
+    TokenBucketRateLimiter,
+    create_rate_limiter,
+)
 
 # ============================================================================
 # Core data types
@@ -711,12 +726,22 @@ __all__ = [
     "GLMCompiler",
     "AnthropicCompiler",
     "DeepSeekCompiler",
-    # Compiler classes (new — V4/M3/GLM-5)
+    # Compiler classes (new — V4/M3/GLM-5/GLM-52)
     "DeepSeekV4Compiler",
     "GLM5Compiler",
+    "GLM52Compiler",
     "MiniMaxM3Compiler",
     # Provider
     "ModelProvider",
+    # Rate limiting
+    "RateLimitStrategy",
+    "RateLimitConfig",
+    "RateLimitStatus",
+    "TokenBucketRateLimiter",
+    "SlidingWindowRateLimiter",
+    "AdaptiveRateLimiter",
+    "RateLimiter",
+    "create_rate_limiter",
     # Factory
     "create_provider",
     # Core types

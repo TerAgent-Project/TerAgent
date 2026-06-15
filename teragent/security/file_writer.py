@@ -34,10 +34,16 @@ import asyncio
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+__all__ = [
+    "atomic_write_file",
+    "write_files_safely",
+]
 
 from teragent.security.permission import PermissionLevel, PermissionManager
 from teragent.utils.exceptions import SandboxViolation
@@ -90,8 +96,32 @@ def _sync_atomic_write(path: str, content: str) -> None:
             f.flush()
             os.fsync(f.fileno())  # 强制落盘
 
-        # 原子替换
-        os.replace(tmp_path, path)
+        # 原子替换（跨平台）
+        if sys.platform == "win32":
+            # Windows NTFS: os.replace 非原子，使用 rename-rename-delete 三步模式
+            # 先备份原文件，再替换，确保崩溃后可恢复
+            backup_path = path + ".teragent_bak"
+            if os.path.exists(path):
+                os.replace(path, backup_path)
+            try:
+                os.replace(tmp_path, path)
+                # 成功后删除备份
+                if os.path.exists(backup_path):
+                    try:
+                        os.unlink(backup_path)
+                    except OSError:
+                        pass
+            except BaseException:
+                # 替换失败，回滚到备份
+                if os.path.exists(backup_path):
+                    try:
+                        os.replace(backup_path, path)
+                    except OSError:
+                        pass
+                raise
+        else:
+            # POSIX: os.replace 在同一文件系统上是原子操作
+            os.replace(tmp_path, path)
         # 在某些系统上，还需要 fsync 目录以确保替换持久化
         try:
             dir_fd = os.open(dir_name, os.O_RDONLY)
@@ -152,8 +182,10 @@ async def atomic_write_file(
     abs_root = os.path.realpath(workspace_root)
     abs_path = os.path.realpath(os.path.join(abs_root, filepath))
 
-    # 2. 路径穿越防护
-    if not (abs_path.startswith(abs_root + os.sep) or abs_path == abs_root):
+    # 2. 路径穿越防护 (with normcase for case-insensitive filesystems)
+    normalized_root = os.path.normcase(abs_root)
+    normalized_path = os.path.normcase(abs_path)
+    if not (normalized_path.startswith(normalized_root + os.sep) or normalized_path == normalized_root):
         raise SandboxViolation(f"Path traversal detected: {filepath}")
 
     # 3. 读后写契约校验
@@ -265,7 +297,9 @@ async def write_files_safely(
     for rel_path in files_dict:
         # 1a. 路径穿越防护
         abs_path = os.path.realpath(os.path.join(abs_root, rel_path))
-        if not (abs_path.startswith(abs_root + os.sep) or abs_path == abs_root):
+        normalized_root = os.path.normcase(abs_root)
+        normalized_path = os.path.normcase(abs_path)
+        if not (normalized_path.startswith(normalized_root + os.sep) or normalized_path == normalized_root):
             # 已验证失败的文件，释放之前获取的写入锁
             _release_all_locks(file_state_tracker, temp_files, writer_id)
             raise SandboxViolation(f"Path traversal detected: {rel_path}")

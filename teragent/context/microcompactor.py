@@ -17,6 +17,10 @@ import logging
 import re
 from typing import TYPE_CHECKING, Optional
 
+__all__ = [
+    "Microcompactor",
+]
+
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
 
@@ -111,8 +115,8 @@ class Microcompactor:
             # 行数不多，直接截断字符
             return self._truncate(content)
 
-        head = "\n".join(lines[: self.file_head_lines])
-        tail = "\n".join(lines[-self.file_tail_lines :])
+        head = "\n".join(self._truncate_line(line) for line in lines[: self.file_head_lines])
+        tail = "\n".join(self._truncate_line(line) for line in lines[-self.file_tail_lines :])
         omitted = total - self.file_head_lines - self.file_tail_lines
 
         result = (
@@ -121,10 +125,10 @@ class Microcompactor:
             f"... (省略 {omitted} 行) ...\n"
             f"{tail}"
         )
-        if len(result) > self.max_inline_length * 5:
+        if len(result) > self.max_inline_length * 2:
             # Further truncate if still too long — preserve tail lines for context
             tail_content = "\n".join(lines[-self.file_tail_lines:])
-            available = max(self.max_inline_length * 3 - len(tail_content) - 100, 200)
+            available = max(self.max_inline_length - len(tail_content) - 100, 200)
             result = result[:available] + f"\n... [进一步截断: 原始 {total} 行] ...\n{tail_content}"
         return result
 
@@ -139,16 +143,22 @@ class Microcompactor:
         # 保留前 N 行（通常包含文件路径和关键匹配）
         head_count = max(self.search_max_lines - 5, 0)
         tail_count = min(5, self.search_max_lines - head_count)
-        kept_head = lines[:head_count]
-        kept_tail = lines[-tail_count:] if tail_count > 0 else []
+        kept_head = [self._truncate_line(line) for line in lines[:head_count]]
+        kept_tail = [self._truncate_line(line) for line in lines[-tail_count:]] if tail_count > 0 else []
         omitted = max(total - len(kept_head) - len(kept_tail), 0)
 
-        return (
+        result_str = (
             f"[已压缩 — 原始 {total} 行匹配，省略 {omitted} 行]\n"
             + "\n".join(kept_head)
             + f"\n... (省略 {omitted} 行) ...\n"
             + "\n".join(kept_tail)
         )
+        # Enforce character budget
+        if len(result_str) > self.max_inline_length * 2:
+            available = max(self.max_inline_length - 100, 200)
+            tail_content = "\n".join(kept_tail) if kept_tail else ""
+            result_str = result_str[:available] + f"\n... [进一步截断: 原始 {total} 行] ...\n{tail_content}"
+        return result_str
 
     def _compact_status(self, content: str) -> str:
         """压缩流水线状态 — 只保留关键状态行"""
@@ -269,15 +279,39 @@ class Microcompactor:
             return None
 
     def _truncate(self, content: str) -> str:
-        """简单截断 — 保留前 TRUNCATE_MAX_CHARS 个字符"""
+        """简单截断 — 保留前 TRUNCATE_MAX_CHARS 个字符，并截断长行"""
+        # Check total length first before line-level truncation
+        original_len = len(content)
+        if original_len <= self.TRUNCATE_MAX_CHARS:
+            # Even if total length is fine, truncate individual long lines
+            lines = content.split("\n")
+            truncated = [self._truncate_line(line) for line in lines]
+            return "\n".join(truncated)
+        # Content exceeds budget — truncate with marker
+        # First truncate individual long lines, then truncate total
+        lines = content.split("\n")
+        truncated = [self._truncate_line(line) for line in lines]
+        content = "\n".join(truncated)
         if len(content) <= self.TRUNCATE_MAX_CHARS:
-            return content
+            # Line-level truncation brought it under budget
+            return (
+                f"[已截断 — 原始 {original_len} 字符，"
+                f"长行已截断]\n"
+                + content
+            )
         return (
-            f"[已截断 — 原始 {len(content)} 字符，"
+            f"[已截断 — 原始 {original_len} 字符，"
             f"仅保留前 {self.TRUNCATE_MAX_CHARS} 字符]\n"
             + content[: self.TRUNCATE_MAX_CHARS]
             + "\n..."
         )
+
+    @staticmethod
+    def _truncate_line(line: str, max_chars: int = 500) -> str:
+        """Truncate a single line to max_chars, adding ellipsis if truncated."""
+        if len(line) <= max_chars:
+            return line
+        return line[:max_chars] + "..."
 
     # ===== GLM-5 200K 极限压缩方法 =====
 
@@ -352,6 +386,10 @@ class Microcompactor:
         - 成功的工具调用细节
         - 调试过程的中间状态
 
+        增强：
+        - 工具调用序列摘要（连续同类工具调用压缩为单行）
+        - 上下文连续性（保留首尾 N 字符作为上下文锚点）
+
         Args:
             content: 原始历史内容
             max_tokens: 最大 token 预算（默认 92160）
@@ -363,8 +401,16 @@ class Microcompactor:
 
         lines = content.split("\n")
 
+        # 上下文连续性：保留首尾 N 字符
+        context_anchor_chars = min(200, len(content) // 10)
+        head_anchor = content[:context_anchor_chars].strip()
+        tail_anchor = content[-context_anchor_chars:].strip() if len(content) > context_anchor_chars else ""
+
         # 提取关键行
         key_lines: list[str] = []
+        prev_tool_call: str | None = None
+        tool_call_count = 0
+
         for line in lines:
             stripped = line.strip()
             if not stripped:
@@ -372,34 +418,89 @@ class Microcompactor:
 
             # 保留：关键决策点
             if self._is_decision_point(stripped):
+                # 先 flush 之前的工具调用序列
+                if tool_call_count > 1 and prev_tool_call:
+                    key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                prev_tool_call = None
+                tool_call_count = 0
                 key_lines.append(f"◆ 决策: {stripped}")
                 continue
 
             # 保留：成功/失败结果
             if self._is_result_line(stripped):
+                if tool_call_count > 1 and prev_tool_call:
+                    key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                prev_tool_call = None
+                tool_call_count = 0
                 key_lines.append(f"● 结果: {stripped}")
                 continue
 
             # 保留：关键错误
             if self._is_key_error(stripped):
+                if tool_call_count > 1 and prev_tool_call:
+                    key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                prev_tool_call = None
+                tool_call_count = 0
                 key_lines.append(f"✖ 错误: {stripped}")
                 continue
 
             # 保留：策略切换
             if self._is_strategy_switch(stripped):
+                if tool_call_count > 1 and prev_tool_call:
+                    key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                prev_tool_call = None
+                tool_call_count = 0
                 key_lines.append(f"↻ 切换: {stripped}")
                 continue
 
             # 保留：标题/结构行
             if stripped.startswith("#") or stripped.startswith("##"):
+                if tool_call_count > 1 and prev_tool_call:
+                    key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                prev_tool_call = None
+                tool_call_count = 0
                 key_lines.append(stripped)
                 continue
+
+            # 检测工具调用序列（合并重复调用）
+            tool_match = re.search(r'\[调用工具:\s*([^\]]+)\]', stripped)
+            if tool_match:
+                tool_name = tool_match.group(1).strip()
+                if tool_name == prev_tool_call:
+                    tool_call_count += 1
+                else:
+                    # flush 之前的序列
+                    if tool_call_count > 1 and prev_tool_call:
+                        key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+                    elif tool_call_count == 1 and prev_tool_call:
+                        # 单次调用保留原始行
+                        key_lines.append(f"◇ 工具: {prev_tool_call}")
+                    prev_tool_call = tool_name
+                    tool_call_count = 1
+                continue
+
+        # flush 最后的工具调用序列
+        if tool_call_count > 1 and prev_tool_call:
+            key_lines.append(f"◇ 工具序列: {prev_tool_call} x{tool_call_count}")
+        elif tool_call_count == 1 and prev_tool_call:
+            key_lines.append(f"◇ 工具: {prev_tool_call}")
 
         if not key_lines:
             # 没有提取到关键行，退化为头尾保留
             return self._compact_file_content(content)
 
-        result = "[激进压缩历史]\n" + "\n".join(key_lines)
+        # 组装结果：头部锚点 + 关键行 + 尾部锚点
+        result_parts = ["[激进压缩历史]"]
+        if head_anchor:
+            result_parts.append(f"--- 上下文起点 ---")
+            result_parts.append(head_anchor)
+            result_parts.append(f"--- 关键记录 ---")
+        result_parts.extend(key_lines)
+        if tail_anchor:
+            result_parts.append(f"--- 上下文终点 ---")
+            result_parts.append(tail_anchor)
+
+        result = "\n".join(result_parts)
 
         # 如果仍然超长，截断
         if len(result) > max_chars:
@@ -533,22 +634,56 @@ class Microcompactor:
     def _format_adr_entry(section: dict) -> str:
         """将章节格式化为 ADR 条目
 
-        ADR 格式：
+        ADR 格式（Architecture Decision Record）：
         ## [决策标题]
-        - 状态: [已采纳/候选/已弃用]
-        - 上下文: [为什么需要做这个决策]
-        - 决策: [做了什么选择]
-        - 理由: [为什么这样选择]
+        - Context: [为什么需要做这个决策]
+        - Decision: [做了什么选择]
+        - Consequences: [权衡与影响]
+
+        提取规则：
+        - Context: 包含"基于","考虑到","根据","依赖","背景","需要"等关键词的行
+        - Decision: 包含"采用","选择","决定","实现","使用"等关键词的行
+        - Consequences: 包含"影响","权衡","风险","代价","优势","缺点","限制"等关键词的行
+        - 未分类内容：只保留包含决策/约束相关关键词的行（丢弃纯描述性内容）
+
+        关键：ADR 只保留 What 和 Why，去掉 How。
+        长行会被截断以控制总长度。
         """
         heading = section.get("heading", "未命名决策")
         content = section.get("content", "")
         level = section.get("level", 2)
 
-        # 从内容中提取关键信息
-        # 尝试识别"状态"、"上下文"、"决策"、"理由"等关键词
+        # 从内容中提取关键信息，分为 Context / Decision / Consequences
         lines = content.split("\n") if content else []
         context_lines: list[str] = []
-        reason_lines: list[str] = []
+        decision_lines: list[str] = []
+        consequences_lines: list[str] = []
+
+        # Decision 关键词
+        decision_keywords = (
+            "采用", "选择", "决定", "实现", "使用", "方案",
+            "approach", "chosen", "selected", "decided",
+        )
+        # Consequences 关键词
+        consequences_keywords = (
+            "影响", "权衡", "风险", "代价", "优势", "缺点", "限制",
+            "优点", "好处", "坏处", "副作用", "trade-off",
+            "pro", "con", "drawback", "benefit", "limitation",
+        )
+        # Context 关键词
+        context_keywords = (
+            "基于", "考虑到", "根据", "依赖", "背景", "需要",
+            "因为", "由于", "原因是", "理由", "为了", "旨在", "目的是",
+        )
+        # 关键信息指示词（非描述性内容才保留）
+        key_indicators = (
+            "决策", "选择", "采用", "架构", "设计", "目标", "原则",
+            "原因", "理由", "约束", "风险", "权衡", "方案", "策略",
+            "影响", "代价", "限制", "要求", "规范", "标准",
+            "基于", "考虑到", "根据", "需要", "因为", "由于",
+        )
+
+        MAX_LINE_LENGTH = 120  # 每行最大长度
 
         for line in lines:
             stripped = line.strip()
@@ -558,25 +693,38 @@ class Microcompactor:
             cleaned = re.sub(r'^[-*]\s+', '', stripped)
             cleaned = re.sub(r'^\d+\.\s+', '', cleaned)
 
-            # 分类到上下文或理由
+            # 截断过长行
+            if len(cleaned) > MAX_LINE_LENGTH:
+                cleaned = cleaned[:MAX_LINE_LENGTH] + "..."
+
+            # 按优先级分类（Consequences > Decision > Context）
             lower = cleaned.lower()
-            if any(kw in lower for kw in ("因为", "由于", "原因是", "因为", "理由", "为了", "旨在", "目的是")):
-                reason_lines.append(cleaned)
-            elif any(kw in lower for kw in ("基于", "考虑到", "根据", "依赖", "背景")):
+            if any(kw in lower for kw in consequences_keywords):
+                consequences_lines.append(cleaned)
+            elif any(kw in lower for kw in decision_keywords):
+                decision_lines.append(cleaned)
+            elif any(kw in lower for kw in context_keywords):
                 context_lines.append(cleaned)
-            else:
-                # 默认归入上下文
+            elif any(kw in cleaned for kw in key_indicators):
+                # 包含关键信息指示词的非分类内容归入 Context
                 context_lines.append(cleaned)
+            # else: 纯描述性内容丢弃（How 部分）
 
         prefix = "#" * min(level, 4)
         parts = [f"{prefix} {heading}"]
 
         if context_lines:
-            # 只保留前 3 行上下文
-            parts.append(f"上下文: {'; '.join(context_lines[:3])}")
-        if reason_lines:
-            # 只保留前 3 行理由
-            parts.append(f"理由: {'; '.join(reason_lines[:3])}")
+            # 只保留前 2 行上下文
+            parts.append(f"Context: {'; '.join(context_lines[:2])}")
+        if decision_lines:
+            # 只保留前 2 行决策
+            parts.append(f"Decision: {'; '.join(decision_lines[:2])}")
+        elif context_lines and len(context_lines) > 2:
+            # 如果没有明确的 Decision 行，从 Context 后续行推断
+            parts.append(f"Decision: {'; '.join(context_lines[2:4])}")
+        if consequences_lines:
+            # 只保留前 2 行后果
+            parts.append(f"Consequences: {'; '.join(consequences_lines[:2])}")
 
         return "\n".join(parts)
 

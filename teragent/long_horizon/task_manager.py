@@ -18,7 +18,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections import deque
 from typing import TYPE_CHECKING
+
+__all__ = [
+    "LongHorizonTaskManager",
+]
 
 from teragent.core.tap import LongHorizonConfig
 from teragent.long_horizon.checkpoint import Checkpoint, CheckpointStore
@@ -510,7 +515,7 @@ class LongHorizonTaskManager:
             if len(self._recent_result_summaries) > max_history:
                 self._recent_result_summaries = self._recent_result_summaries[-max_history:]
 
-            success = bool(content and "失败" not in content[:50])
+            success = bool(content and not self._is_failure_response(content))
             errors = []
             if not success:
                 errors.append("执行结果可能不理想")
@@ -755,12 +760,12 @@ class LongHorizonTaskManager:
                     dependents[dep_id].append(sg.id)
                     in_degree[sg.id] += 1
 
-        # Kahn 算法
-        queue = [sg_id for sg_id, deg in in_degree.items() if deg == 0]
+        # Kahn 算法 — use deque for O(1) popleft (vs O(n) list.pop(0))
+        queue: deque[str] = deque(sg_id for sg_id, deg in in_degree.items() if deg == 0)
         result: list[SubGoal] = []
 
         while queue:
-            sg_id = queue.pop(0)
+            sg_id = queue.popleft()
             if sg_id in id_to_sg:
                 result.append(id_to_sg[sg_id])
             for dependent_id in dependents.get(sg_id, []):
@@ -967,6 +972,37 @@ class LongHorizonTaskManager:
             )
 
         return sub_goals
+
+    @staticmethod
+    def _is_failure_response(content: str) -> bool:
+        """判断模型响应是否表示失败
+
+        使用结构化的失败标记而非简单的关键词匹配，避免误判包含
+        "失败"二字但实际成功的正常回复（如"部分测试失败是因为环境问题"）。
+
+        Args:
+            content: 模型返回的文本
+
+        Returns:
+            True 如果响应明确表示失败
+        """
+        # 结构化失败标记（高置信度）
+        high_confidence_markers = [
+            "【失败】", "STATUS: FAILED", "STATUS:ERROR",
+            "执行失败：", "任务失败：", "ERROR:", "FATAL:",
+        ]
+        for marker in high_confidence_markers:
+            if marker in content:
+                return True
+
+        # 开头就是明确的失败声明（前20字符）
+        content_start = content[:20]
+        failure_prefixes = ["失败", "Failed", "failed", "Error", "error", "无法完成"]
+        for prefix in failure_prefixes:
+            if content_start.startswith(prefix):
+                return True
+
+        return False
 
     @staticmethod
     def _estimate_steps_from_response(content: str) -> int:

@@ -1,5 +1,7 @@
 # Three-Model Adaptation Guide
 
+> **⚠️ This guide has been superseded by the [Four-Model Adaptation Guide](adaptation_guide.md)**, which now includes **GLM-5.2** with 1M context, dual thinking modes, PreservedThinking, and 5V-Turbo vision coordination. The guide below is retained for historical reference.
+
 This guide covers how to configure and use TerAgent's three-model deep adaptation architecture with **DeepSeek V4**, **MiniMax M3**, and **GLM-5**.
 
 ---

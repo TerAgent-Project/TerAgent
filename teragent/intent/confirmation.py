@@ -14,6 +14,10 @@ import asyncio
 import logging
 import uuid
 
+__all__ = [
+    "ConfirmationGate",
+]
+
 from teragent.event_bus import EventBus
 
 logger = logging.getLogger(__name__)

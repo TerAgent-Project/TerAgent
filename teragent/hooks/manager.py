@@ -45,9 +45,21 @@ import asyncio
 import json
 import logging
 import shlex
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
+
+__all__ = [
+    "Hook",
+    "HookContext",
+    "HookDecision",
+    "HookEvent",
+    "HookManager",
+    "HookResult",
+    "PythonHook",
+    "ShellHook",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +217,7 @@ class ShellHook(Hook):
 
         try:
             # 使用 shlex 分割命令（处理引号等）
-            cmd_parts = shlex.split(self.command)
+            cmd_parts = shlex.split(self.command, posix=not sys.platform.startswith("win"))
             proc = await asyncio.create_subprocess_exec(
                 *cmd_parts,
                 stdin=asyncio.subprocess.PIPE,

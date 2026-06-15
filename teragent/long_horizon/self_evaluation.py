@@ -35,6 +35,11 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "SelfEvaluationResult",
+    "SelfEvaluator",
+]
+
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
     from teragent.long_horizon.progress import ProgressReport

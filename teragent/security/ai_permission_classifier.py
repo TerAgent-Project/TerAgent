@@ -51,10 +51,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import sys
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+__all__ = [
+    "AIPermissionClassifier",
+]
 
 from teragent.security.permission import PermissionEffect
 
@@ -90,12 +96,25 @@ _HIGH_RISK_TOOL_NAMES: frozenset[str] = frozenset({
 })
 
 # Path patterns that are always denied (high confidence)
-_SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
+_SENSITIVE_PATH_PREFIXES_UNIX: tuple[str, ...] = (
     "/etc/",
     ".env",
     ".ssh/",
     ".git/",
 )
+
+def _get_sensitive_path_prefixes() -> tuple[str, ...]:
+    """获取平台特定的敏感路径前缀"""
+    prefixes = list(_SENSITIVE_PATH_PREFIXES_UNIX)
+    if sys.platform == "win32":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        prefixes.extend([
+            system_root.replace("\\", "/") + "/",
+            os.path.join(system_root, "System32").replace("\\", "/") + "/",
+        ])
+    return tuple(prefixes)
+
+_SENSITIVE_PATH_PREFIXES: tuple[str, ...] = _get_sensitive_path_prefixes()
 
 
 # ===== LRU Cache =====
@@ -230,7 +249,10 @@ class _HeuristicClassifier:
         """
         if not path:
             return False
-        normalized = path.lower().replace("\\", "/")
+        if sys.platform == "win32":
+            normalized = path.lower().replace("\\", "/")  # Windows: 大小写不敏感，需 .lower()
+        else:
+            normalized = path.replace("\\", "/")  # Unix: 保留大小写
         parts = normalized.split("/")
 
         for prefix in _SENSITIVE_PATH_PREFIXES:

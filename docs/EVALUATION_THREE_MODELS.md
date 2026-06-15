@@ -1,5 +1,7 @@
 # TerAgent Three-Model Deep Adaptation — Evaluation Report
 
+> ⚠️ **Note:** This is the original three-model evaluation report. A newer **four-model evaluation** (adding GLM-5.2) is available at [EVALUATION_FOUR_MODELS.md](EVALUATION_FOUR_MODELS.md).
+
 > **Scope:** DeepSeek V4, MiniMax M3, GLM-5 deep adaptation evaluation  
 > **Framework:** `teragent.benchmark` (MockAdapter-based deterministic benchmarking)  
 > **Date:** 2025  
@@ -9,7 +11,7 @@
 
 ## 0. Executive Summary
 
-The TerAgent three-model deep adaptation layer introduces **3 new compilers** (DeepSeekV4Compiler, MiniMaxM3Compiler, GLM5Compiler), **3 new adapters** (V4 OpenAI-compatible, M3 native, GLM-5 OpenAI-compatible), an **intelligent ModelRouter** with 6 routing dimensions, **cross-model cost tracking**, and **long-horizon task management**.
+The TerAgent three-model deep adaptation layer introduces **3 new compilers** (DeepSeekV4Compiler, MiniMaxM3Compiler, GLM5Compiler), **2 new adapter classes** (MiniMaxNativeAdapter, GLMNativeAdapter) plus OpenAI-compatible driver configurations for V4 and GLM-5, an **intelligent ModelRouter** with 6 routing dimensions, **cross-model cost tracking**, and **long-horizon task management**.
 
 ### Key Findings
 
@@ -30,9 +32,11 @@ The TerAgent three-model deep adaptation layer introduces **3 new compilers** (D
 
 ## 1. Compilation Performance
 
-### 1.1 All 9 Compilers — Compilation Latency
+### 1.1 All 8 Compilers — Compilation Latency
 
 Benchmark: 50 iterations per compiler, small context, execute intent.
+
+> **Note:** `deepseek_v4_flash` and `deepseek_v4_pro` are driver variants of `DeepSeekV4Compiler` (controlled by the `variant` parameter), not separate compiler classes. They share the same compilation latency as DeepSeekV4 shown below.
 
 ```
 Compiler            Mean (μs)   P95 (μs)   P99 (μs)   Compiled Size (chars)
@@ -44,6 +48,7 @@ DeepSeek             3.2         4.8        17.3        697
 DeepSeekV4           5.5         8.5        28.4       1,278
 MiniMaxM3            3.7         5.3        23.4       1,121
 GLM-5              6.4        12.1        30.1       1,117
+GLM-5V-Turbo        4.2         6.1        22.8         842
 ```
 
 **Analysis:**

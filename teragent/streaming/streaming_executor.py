@@ -45,6 +45,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+__all__ = [
+    "StreamingToolExecutor",
+]
+
 from teragent.core.types import ToolSafety
 from teragent.streaming.stream_events import (
     StreamEventType,
@@ -282,6 +286,8 @@ class StreamingToolExecutor:
                     finish_reason = event.finish_reason
                     break
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(
                 f"StreamingToolExecutor: stream iteration failed: {e}",
@@ -337,6 +343,8 @@ class StreamingToolExecutor:
                             await on_tool_complete(tool_call_dict, result)
                         except Exception as e:
                             logger.debug(f"on_tool_complete callback error: {e}")
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.error(
                         f"StreamingToolExecutor: immediate task {idx} failed: {e}"
@@ -378,6 +386,8 @@ class StreamingToolExecutor:
                     result = await self._orchestrator._execute_single(
                         tool_call_dict, on_progress
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     # Look up the tool's actual safety level for accurate metadata
                     tool = self.tool_registry.get(pc.name)

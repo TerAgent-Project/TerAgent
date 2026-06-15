@@ -5,6 +5,12 @@
 
 长期目标：在 agent.toml 中添加 token_counting_method = "tiktoken" | "estimate" 配置。
 """
+
+__all__ = [
+    "detect_content_type",
+    "estimate_tokens",
+]
+
 import re
 
 

@@ -33,7 +33,7 @@ TerAgent 围绕 **编译器-适配器架构** 构建，引入了 **TAP IR**（To
 | 提示格式 | 模型系列 | GLM 近因效应、Anthropic XML 标签、DeepSeek 极简 |
 | API 协议 | 服务商 | OpenAI `/chat/completions`、Anthropic `/messages` |
 
-通过将它们分离为 **Compiler** 和 **Adapter**，我们获得 **4 × 3 = 12 种组合**，而非 12 个独立集成。
+通过将它们分离为 **Compiler** 和 **Adapter**，我们获得 **9 × 5 = 45 种组合**（9 个编译器 × 5 个适配器），而非 45 个独立集成。在生产环境中（排除 `mock` 适配器），则是 **9 × 4 = 36 种有效组合**。
 
 **添加新模型** 只需要一个新的 Compiler 类。**添加新协议** 只需要一个新的 Adapter 类。两者正交组合。
 
@@ -95,7 +95,52 @@ TerAgent 的可靠性系统默认为 **建议性而非阻塞性**：
    └─────────────────┘  │ VectorIndexer*  │
                         └─────────────────┘
                         (* optional dependencies)
+
+   ┌──────────────────────┐  ┌──────────────────────────────────────┐
+   │   Router             │  │   Long-Horizon                       │
+   │                      │  │                                      │
+   │ ModelRouter          │  │ LongHorizonTaskManager               │
+   │ RoutingTable         │  │ CheckpointStore                      │
+   │ PipelineManager      │  │ SelfEvaluator                        │
+   └──────────────────────┘  │ StrategySwitcher                     │
+                             │ ProgressTracker                      │
+   ┌──────────────────────┐  └──────────────────────────────────────┘
+   │   Benchmark          │
+   │                      │  ┌──────────────────────────────────────┐
+   │ BenchmarkRunner      │  │   Tools                              │
+   └──────────────────────┘  │                                      │
+                             │ BaseTool, ToolRegistry, Orchestrator │
+                             │ DesktopTool (desktop automation)     │
+                             └──────────────────────────────────────┘
 ```
+
+## 已注册的编译器与适配器
+
+### 编译器（9 个已注册）
+
+| 名称 | 类 | 优化策略 |
+|------|-----|----------|
+| `default` | `TAPCompiler` | 标准聊天消息 |
+| `glm` | `TAPCompiler` | 近因效应（关键指令置末） |
+| `glm_5` | `GLM5Compiler` | 近因效应 + 长时任务 + 自我评估 |
+| `glm_52` | `GLM52Compiler` | 1M 上下文 + 双思考模式（High/Max）+ PreservedThinking + 5V-Turbo 协调 |
+| `glm_5v_turbo` | `GLM5VTurboCompiler` | GLM-5V-Turbo 模型的视觉分析 |
+| `anthropic` | `TAPCompiler` | XML 标签结构化 + Mode B（system/user 分离） |
+| `deepseek` | `TAPCompiler` | 极简编译 |
+| `deepseek_v4` | `DeepSeekV4Compiler` | 缓存感知布局 + 思考模式 + 1M 上下文优化（flash/pro 通过 `variant` 参数控制） |
+| `minimax_m3` | `MiniMaxM3Compiler` | MSA 全文注入 + 多模态 + 桌面上下文 |
+
+> **注意：** `deepseek_v4_flash` 和 `deepseek_v4_pro` **不是**独立的编译器 —— 它们是 `DeepSeekV4Compiler` 的变体，通过 `variant` 参数控制。
+
+### 适配器（5 个已注册）
+
+| 名称 | 类 | 协议 |
+|------|-----|------|
+| `openai_compatible` | `OpenAICompatibleAdapter` | OpenAI `/chat/completions` + SSE |
+| `anthropic_native` | `AnthropicNativeAdapter` | Anthropic `/messages` + Anthropic SSE |
+| `glm_native` | `GLMNativeAdapter` | 智谱 AI 原生 API |
+| `minimax_native` | `MiniMaxNativeAdapter` | MiniMax 原生 API + 速率限制追踪 |
+| `mock` | `MockAdapter` | 无 HTTP 调用（测试用） |
 
 ## 数据流：一次完整的 TAP 调用
 
@@ -172,6 +217,7 @@ CompiledPrompt(
         {"role": "user", "content": "..."},
     ],
     tools=[...],
+    extra={"cache_aware": True},  # 编译器特定参数，传递给适配器
 )
 ```
 
@@ -182,10 +228,11 @@ CompiledPrompt(
     system_prompt="...",
     user_message="...",
     tools=[...],
+    extra={},  # 额外字典，用于编译器特定参数
 )
 ```
 
-`CompiledPrompt.mode` 属性返回 `"messages"`、`"system_user"` 或 `"empty"`。Adapter 通过 `required_mode` 验证兼容性。
+`CompiledPrompt.mode` 属性返回 `"messages"`、`"system_user"` 或 `"empty"`。Adapter 通过 `required_mode` 验证兼容性。`extra` 字典携带编译器特定参数（如 `cache_aware`、`variant`、`minimax_video_mode`），供适配器定制行为。
 
 ## 编译器注册模式
 

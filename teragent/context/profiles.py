@@ -13,6 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+__all__ = [
+    "ContextProfile",
+    "DeepSeekV4ContextProfile",
+    "GLM5CompactionStrategy",
+    "GLM5ContextProfile",
+    "MiniMaxM3ContextProfile",
+]
+
 
 @dataclass
 class ContextProfile:
@@ -142,13 +150,26 @@ class GLM5ContextProfile(ContextProfile):
 
     max_tokens: int = 200_000
     system_ratio: float = 0.10  # 20K
-    history_ratio: float = 0.45  # 90K (压缩设计 + 历史)
-    large_file_ratio: float = 0.15  # 30K (最近完整消息)
+    history_ratio: float = 0.25  # 50K (compressed history only)
+    large_file_ratio: float = 0.10  # 20K
     tail_reinforcement_ratio: float = 0.10  # 20K
     description: str = "GLM-5 200K extreme compression"
 
     design_ratio: float = 0.20  # 40K for compressed design doc
     recent_complete_ratio: float = 0.15  # 30K for recent complete messages
+    # Total: 0.10 + 0.25 + 0.10 + 0.10 + 0.20 + 0.15 = 0.90
+    # Buffer: 0.10 (10% for unexpected overhead)
+
+    @property
+    def total_allocated_ratio(self) -> float:
+        """已分配比例总和（应 <= 1.0）
+
+        Override base to include GLM-5 specific ratios (design + recent_complete).
+        """
+        return (
+            self.system_ratio + self.history_ratio + self.large_file_ratio
+            + self.tail_reinforcement_ratio + self.design_ratio + self.recent_complete_ratio
+        )
 
     @property
     def design_budget(self) -> int:

@@ -18,6 +18,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "TAPCompiler",
+    "TAPCompilerRegistry",
+]
+
 if TYPE_CHECKING:
     from teragent.core.tap import CompiledPrompt, TAPRequest
 
@@ -118,12 +123,15 @@ class TAPCompiler(ABC):
         """
         return "default"
 
-    @functools.cached_property
+    @property
     def _default_prompts(self) -> dict[str, str]:
         """Provide intent-specific system prompts from the Prompt Registry.
 
         Uses _get_compiler_type() to select the correct compiler variant.
         Subclasses that override this property will bypass the Registry.
+
+        Note: Uses regular @property (not cached_property) so that runtime
+        changes to the prompt registry take effect immediately.
         """
         from teragent.core.prompts import get_system_prompt_for_intent, list_intents
         compiler_type = self._get_compiler_type()
@@ -244,9 +252,13 @@ class TAPCompiler(ABC):
 
 
 class TAPCompilerRegistry:
-    """Compiler registry — maps compiler names to Compiler classes"""
+    """Compiler registry — maps compiler names to Compiler classes
 
-    _compilers: dict[str, type[TAPCompiler]] = {}
+    Note: _compilers is NOT declared as a class-level mutable default to avoid
+    shared-state bugs across subclasses. It is lazily created per-class via
+    _get_registry(), which checks cls.__dict__ to ensure each subclass gets
+    its own independent registry.
+    """
 
     @classmethod
     def _get_registry(cls) -> dict[str, type[TAPCompiler]]:

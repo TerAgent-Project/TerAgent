@@ -167,9 +167,14 @@ def _ensure_dotenv_loaded() -> None:
     _dotenv_loaded = True
     try:
         from dotenv import load_dotenv
-        # Try loading from CWD first, then from project root
+        # Try loading .env from multiple locations (按优先级排序)
+        # 1. 当前工作目录 (最高优先级)
         load_dotenv()
-        # Also try the project root (where agent.toml typically lives)
+        # 2. 用户主目录
+        home_env = os.path.join(os.path.expanduser("~"), ".env")
+        if os.path.exists(home_env):
+            load_dotenv(home_env, override=False)
+        # 3. 项目源码根目录 (where agent.toml typically lives)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))
         )))

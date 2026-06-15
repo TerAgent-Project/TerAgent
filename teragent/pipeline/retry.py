@@ -19,9 +19,31 @@ import asyncio
 import logging
 from typing import Awaitable, Callable, TypeVar
 
+__all__ = [
+    "RetryValidationError",
+    "retry_with_backoff",
+]
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class RetryValidationError(ValueError):
+    """Raised when validation fails on the last retry attempt.
+
+    This distinguishes "function ran but output was invalid" from
+    "function crashed with an exception", allowing callers to handle
+    the two failure modes differently.
+    """
+
+    def __init__(self, errors: list[str] | str) -> None:
+        if isinstance(errors, list):
+            error_msg = f"Validation failed: {errors}"
+        else:
+            error_msg = errors
+        super().__init__(error_msg)
+        self.validation_errors = errors
 
 
 async def retry_with_backoff(
@@ -38,14 +60,14 @@ async def retry_with_backoff(
         max_retries: Maximum number of retries (total attempts = max_retries + 1)
         backoff_base: Base delay in seconds (actual = base * 2^attempt)
         validate: Optional result validation function; returns error list
-            (empty = pass). If validation fails on last attempt, raises ValueError.
+            (empty = pass). If validation fails on last attempt, raises RetryValidationError.
         on_retry: Optional callback invoked before each retry: (attempt, error_msg)
 
     Returns:
         The return value of fn()
 
     Raises:
-        ValueError: If validation fails on the last attempt
+        RetryValidationError: If validation fails on the last attempt
         Exception: The last exception from fn() if all retries exhausted
     """
     last_error = ""
@@ -61,8 +83,9 @@ async def retry_with_backoff(
                             on_retry(attempt, last_error)
                         await asyncio.sleep(backoff_base * (2 ** attempt))
                         continue
-                    # Last attempt validation failure → raise ValueError
-                    raise ValueError(last_error)
+                    # Last attempt validation failure → raise RetryValidationError
+                    # (distinct from function crash, which re-raises the original exception)
+                    raise RetryValidationError(errors)
             return result
         except Exception as e:
             last_error = str(e)

@@ -4,7 +4,7 @@ TerAgent uses a typed configuration system backed by `agent.toml` files. This do
 
 ## Configuration File
 
-Create an `agent.toml` in your project root:
+Create an `agent.toml` in your project root (see `examples/agent.toml` for a complete example):
 
 ```toml
 [drivers.openai_compatible.glm_5]
@@ -35,6 +35,21 @@ review_driver = "openai_compatible.glm_5"
 mode = "plan"
 rules = { allow = ["read_file:*", "explore_codebase:*"], deny = ["*:**/.env*", "read_file:/etc/*"] }
 ```
+
+## Configuration File Search Paths
+
+TerAgent searches for `agent.toml` in the following locations, in priority order:
+
+| Priority | Location | Platform |
+|----------|----------|----------|
+| 1 | `./agent.toml` (current working directory) | All |
+| 2 | `%APPDATA%\teragent\agent.toml` | Windows |
+| 2 | `~/Library/Application Support/teragent/agent.toml` | macOS |
+| 2 | `$XDG_CONFIG_HOME/teragent/agent.toml` (default `~/.config/teragent/`) | Linux |
+| 3 | `<project_root>/agent.toml` | All |
+| 4 | `agent.toml` (fallback) | All |
+
+The first existing file found is used. This allows you to set up a global configuration in your platform's standard config directory that applies to all projects.
 
 ## Loading Configuration
 
@@ -68,7 +83,30 @@ Each driver defines a compiler + adapter + model + API key combination:
 | `api_key_env` | string | Recommended | Environment variable name for API key |
 | `api_key` | string | Not recommended | Direct API key value (security risk) |
 | `model` | string | Yes | Model identifier string |
-| `compiler` | string | Yes | One of: `default`, `glm`, `anthropic`, `deepseek` |
+| `compiler` | string | Yes | One of: `default`, `glm`, `glm_5`, `glm_52`, `glm_5v_turbo`, `anthropic`, `deepseek`, `deepseek_v4`, `minimax_m3` |
+
+### Adapter HTTP Configuration
+
+All HTTP-based adapters (`openai_compatible`, `anthropic_native`, `minimax_native`) accept the following configuration parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ssl_verify` | `bool \| str` | `True` | SSL certificate verification. `True` = system CA, `False` = disable (insecure), `str` = path to custom CA bundle |
+| `http2_enabled` | `bool` | `False` | Enable HTTP/2 for the connection pool. Requires `h2` package. Disable for HTTP/1.1-only proxy environments |
+
+```python
+from teragent.core.adapters import OpenAICompatibleAdapter
+
+# Enterprise proxy with custom CA
+adapter = OpenAICompatibleAdapter(
+    base_url="https://api.example.com/v1",
+    api_key="...",
+    ssl_verify="/path/to/ca-bundle.crt",  # Custom CA certificate
+    http2_enabled=False,                    # Disable for HTTP/1.1 proxy
+)
+```
+
+**Note:** `http2_enabled` defaults to `False` for maximum compatibility. Enable it only when you know the endpoint supports HTTP/2.
 
 ### API Key Security
 
@@ -279,6 +317,80 @@ long_horizon_enabled = true             # Enable long-horizon mode (8h autonomy)
 | `max_context_tokens` | int | `200_000` | GLM-5 context window (200K) |
 | `long_horizon_enabled` | bool | `false` | Enable long-horizon autonomous mode |
 
+### GLM-5.2 Driver
+
+```toml
+[drivers.openai_compatible.glm_52]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5.2"
+compiler = "glm_52"
+max_context_tokens = 1_000_000          # GLM-5.2 supports 1M context
+max_output_tokens = 128_000
+thinking_mode = "high"                  # Default: "high" (vs "max" for deep reasoning)
+dual_thinking_enabled = true            # Enable High/Max dual thinking mode
+preserved_thinking_enabled = true       # Enable PreservedThinking for coding plans
+vision_coordination_enabled = true      # Enable 5V-Turbo vision coordination
+long_horizon_enabled = true             # GLM-5.2 also supports long-horizon
+context_degradation_enabled = true      # Auto-downgrade 1M → 200K under pressure
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | — | Must be `"glm-5.2"` |
+| `compiler` | string | — | Must be `"glm_52"` |
+| `max_context_tokens` | int | `1_000_000` | GLM-5.2 context window (1M) |
+| `thinking_mode` | string | `"high"` | Default thinking mode: `high` or `max` |
+| `dual_thinking_enabled` | bool | `false` | Enable High/Max dual thinking mode |
+| `preserved_thinking_enabled` | bool | `false` | Enable PreservedThinking for coding plans |
+| `vision_coordination_enabled` | bool | `false` | Enable 5V-Turbo vision coordination |
+| `context_degradation_enabled` | bool | `false` | Auto-downgrade 1M → 200K under memory pressure |
+
+### GLM-5V-Turbo Driver (for Vision Coordination)
+
+```toml
+[drivers.openai_compatible.glm_5v_turbo]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5v-turbo"
+compiler = "glm_5v_turbo"
+```
+
+### GLMNative Driver
+
+```toml
+[drivers.glm_native.glm_5]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5"
+compiler = "glm_5"
+
+[drivers.glm_native.glm_52]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5.2"
+compiler = "glm_52"
+max_context_tokens = 1_000_000
+thinking_mode = "high"
+dual_thinking_enabled = true
+preserved_thinking_enabled = true
+```
+
+### MiniMaxNative Driver
+
+```toml
+[drivers.minimax_native.minimax_m3]
+base_url = "https://api.minimaxi.com/v1"
+api_key_env = "MINIMAX_API_KEY"
+model = "minimax-m3"
+compiler = "minimax_m3"
+max_context_tokens = 1_000_000
+multimodal_enabled = true
+desktop_enabled = true
+msa_efficient = true
+group_id = ""
+```
+
 ## Smart Routing Configuration
 
 ### [routing] Section
@@ -311,7 +423,7 @@ Monthly cost control with automatic downgrade:
 [routing.monthly_budget]
 limit_cny = 500.0              # Monthly budget cap in CNY
 warning_threshold = 0.8        # Warn at 80% utilization
-critical_threshold = 1.0       # Auto-downgrade at 100%
+critical_threshold = 0.95      # Auto-downgrade at 95%
 auto_downgrade = true          # Enable automatic downgrade
 auto_downgrade_driver = "openai_compatible.deepseek_v4_flash"  # Fallback driver
 notify_on_warning = true       # Emit events on budget warning
@@ -321,7 +433,7 @@ notify_on_warning = true       # Emit events on budget warning
 |-------|------|---------|-------------|
 | `limit_cny` | float | `0.0` | Monthly budget cap in CNY (0 = no limit) |
 | `warning_threshold` | float | `0.8` | Fraction at which to emit warning |
-| `critical_threshold` | float | `1.0` | Fraction at which to auto-downgrade |
+| `critical_threshold` | float | `0.95` | Fraction at which to auto-downgrade |
 | `auto_downgrade` | bool | `true` | Whether to auto-downgrade when budget exhausted |
 | `auto_downgrade_driver` | string | `"openai_compatible.deepseek_v4_flash"` | Driver to fall back to |
 | `notify_on_warning` | bool | `true` | Whether to emit events on budget warning |
@@ -372,6 +484,7 @@ Each profile section supports:
 - `default` — Uses the base `[execution.pipeline]` settings
 - `budget` — All stages use V4-Flash
 - `multimodal` — All stages use M3
+- `deep_thinking` — All stages use GLM-5.2 (Max thinking mode)
 
 ## Per-Model Circuit Breaker Configuration
 
@@ -410,17 +523,19 @@ Controls the fallback order when a model becomes unavailable:
 
 ```toml
 [degradation]
-# Default chains for the three-model architecture
-heavy = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
-multimodal = ["minimax_m3", "deepseek_v4_pro"]
-default = ["deepseek_v4_pro", "glm_5", "deepseek_v4_flash"]
+# Default chains for the four-model architecture
+heavy = ["deepseek_v4_pro", "glm_52", "glm_5", "deepseek_v4_flash"]
+multimodal = ["minimax_m3", "glm_52", "deepseek_v4_pro"]
+ultra_context = ["glm_52", "deepseek_v4_pro", "minimax_m3"]
+default = ["deepseek_v4_pro", "glm_52", "glm_5", "deepseek_v4_flash"]
 ```
 
 | Chain | Description |
 |-------|-------------|
-| `heavy` | Complex tasks: V4-Pro → GLM-5 → V4-Flash |
-| `multimodal` | Visual tasks: M3 → V4-Pro (degrades to text-only) |
-| `default` | General tasks: V4-Pro → GLM-5 → V4-Flash |
+| `heavy` | Complex tasks: V4-Pro → GLM-5.2 → GLM-5 → V4-Flash |
+| `multimodal` | Visual tasks: M3 → GLM-5.2 → V4-Pro (degrades to text-only) |
+| `ultra_context` | Large context: GLM-5.2 → V4-Pro → M3 |
+| `default` | General tasks: V4-Pro → GLM-5.2 → GLM-5 → V4-Flash |
 
 ## Long-Horizon Task Configuration
 
@@ -583,8 +698,14 @@ retain_count = 8
 |----------|-------------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (V4-Flash and V4-Pro) |
 | `MINIMAX_API_KEY` | MiniMax API key (M3) |
-| `GLM_API_KEY` | Zhipu AI API key (GLM-5) |
+| `GLM_API_KEY` | Zhipu AI API key (GLM-5 and GLM-5.2) |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 
-TerAgent uses `python-dotenv` to load `.env` files automatically.
+TerAgent uses `python-dotenv` to load `.env` files automatically. The following search order is used:
+
+1. Current working directory (`./.env`) — highest priority
+2. User home directory (`~/.env`)
+3. Project source root directory
+
+The first file found is loaded; subsequent files do not override existing values.

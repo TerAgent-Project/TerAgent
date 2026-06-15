@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -20,6 +21,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+__all__ = [
+    "Checkpoint",
+    "CheckpointStore",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +151,7 @@ class CheckpointStore:
         """保存检查点
 
         创建任务目录（如果不存在），将检查点序列化为 JSON 写入文件。
+        Blocking I/O is run in executor to avoid blocking the event loop.
 
         Args:
             checkpoint: 要保存的检查点对象
@@ -153,14 +160,17 @@ class CheckpointStore:
             检查点ID（与 checkpoint.checkpoint_id 相同）
         """
         task_dir = self._task_dir(checkpoint.task_id)
-        task_dir.mkdir(parents=True, exist_ok=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: task_dir.mkdir(parents=True, exist_ok=True))
 
         file_path = self._checkpoint_path(checkpoint.task_id, checkpoint.checkpoint_id)
         data = checkpoint.to_dict()
 
-        # 同步写入（数据量小，不阻塞事件循环）
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        def _write_file():
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+        await loop.run_in_executor(None, _write_file)
 
         logger.info(
             f"Checkpoint saved: task={checkpoint.task_id} "
@@ -208,7 +218,7 @@ class CheckpointStore:
                 continue
             file_path = task_dir / f"{checkpoint_id}.json"
             if file_path.exists():
-                return self._read_checkpoint_file(file_path)
+                return await self._read_checkpoint_file_async(file_path)
 
         return None
 
@@ -227,7 +237,7 @@ class CheckpointStore:
 
         checkpoints: list[Checkpoint] = []
         for file_path in task_dir.glob("*.json"):
-            cp = self._read_checkpoint_file(file_path)
+            cp = await self._read_checkpoint_file_async(file_path)
             if cp is not None:
                 checkpoints.append(cp)
 
@@ -272,7 +282,7 @@ class CheckpointStore:
         return deleted
 
     def _read_checkpoint_file(self, file_path: Path) -> Optional[Checkpoint]:
-        """从 JSON 文件读取检查点
+        """从 JSON 文件读取检查点（同步版本，保留向后兼容）
 
         Args:
             file_path: JSON 文件路径
@@ -287,6 +297,26 @@ class CheckpointStore:
         except (json.JSONDecodeError, OSError, KeyError) as e:
             logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
             return None
+
+    async def _read_checkpoint_file_async(self, file_path: Path) -> Optional[Checkpoint]:
+        """从 JSON 文件读取检查点（异步版本，避免阻塞事件循环）
+
+        Args:
+            file_path: JSON 文件路径
+
+        Returns:
+            Checkpoint 对象，如果读取失败则返回 None
+        """
+        def _read():
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return Checkpoint.from_dict(data)
+            except (json.JSONDecodeError, OSError, KeyError) as e:
+                logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+                return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _read)
 
     @staticmethod
     def generate_checkpoint_id() -> str:

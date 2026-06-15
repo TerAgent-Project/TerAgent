@@ -60,6 +60,14 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Any, Awaitable, Callable
 
+__all__ = [
+    "EnhancedPermissionManager",
+    "PermissionEffect",
+    "PermissionLevel",
+    "PermissionManager",
+    "PermissionRule",
+]
+
 from teragent.utils.exceptions import PermissionDenied
 
 logger = logging.getLogger(__name__)
@@ -551,8 +559,18 @@ class EnhancedPermissionManager:
             return True, "Approved (BYPASS - user confirmed high-risk)"
 
         if self._base_manager.current_level >= PermissionLevel.PLAN:
-            # PLAN: allow project directory writes
-            return True, "Approved (PLAN level - project write allowed)"
+            # PLAN: 仅允许安全的读写操作，执行命令和破坏性操作仍需确认
+            safe_tool_patterns = {
+                "read_file", "write_file", "list_directory", "search_files",
+                "read", "write", "list", "search", "grep", "cat", "ls",
+                "find", "head", "tail", "diff", "wc",
+            }
+            tool_base = tool_name.split("_")[0] if "_" in tool_name else tool_name
+            if tool_name in safe_tool_patterns or tool_base in safe_tool_patterns:
+                return True, "Approved (PLAN level - project read/write allowed)"
+            # 非安全工具在 PLAN 级别仍需确认
+            self._deny_count += 1
+            return False, f"工具 {tool_name} 在 PLAN 级别需要显式确认"
 
         # DEFAULT: fall back to default policy
         if self._default_effect == PermissionEffect.ALLOW:

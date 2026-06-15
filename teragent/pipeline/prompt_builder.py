@@ -11,6 +11,12 @@ context injection), the caller provides the persona (system template).
 """
 import logging
 
+__all__ = [
+    "build_prompt",
+    "build_subagent_prompt",
+    "validate_prompt_tokens",
+]
+
 logger = logging.getLogger(__name__)
 
 # Flat average estimate (~3 chars/token); for CJK-aware counting, use utils.token_counter
@@ -75,14 +81,17 @@ def build_prompt(
         A list of message dicts with "role" and "content" keys
     """
     def safe_fill(text: str) -> str:
-        return text if text.strip() else "N/A"
+        return text.strip() if text and text.strip() else "N/A"
 
     class _SafeDict(dict):
         def __missing__(self, key):
             return f"{{{key}}}"
 
-    # Fill context values with safe defaults
-    filled_context = {k: safe_fill(v) if isinstance(v, str) else str(v) for k, v in context.items()}
+    # Fill context values with safe defaults; convert None to "N/A" explicitly
+    filled_context = {
+        k: safe_fill(v) if isinstance(v, str) else ("N/A" if v is None else str(v))
+        for k, v in context.items()
+    }
 
     system_content = system_template.format_map(_SafeDict(filled_context))
     task_desc = context.get("task_desc", "")

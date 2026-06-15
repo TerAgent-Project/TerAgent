@@ -68,8 +68,8 @@ teragent/
 │   ├── adapter.py     # TAPAdapter ABC + Registry
 │   ├── provider.py    # ModelProvider (Compiler + Adapter composition)
 │   ├── types.py       # Message, MessageRole, MessageType, ToolSafety
-│   ├── compilers/     # Concrete compilers: default, glm, anthropic, deepseek
-│   ├── adapters/      # Concrete adapters: openai_compatible, anthropic_native, mock
+│   ├── compilers/     # Concrete compilers: default, glm, glm_5, glm_52, glm_5v_turbo, anthropic, deepseek, deepseek_v4, minimax_m3
+│   ├── adapters/      # Concrete adapters: openai_compatible, anthropic_native, glm_native, minimax_native, mock
 │   └── prompts/       # Intent-specific system prompts
 ├── security/          # Security architecture
 │   ├── permission.py  # PermissionManager + EnhancedPermissionManager
@@ -80,8 +80,8 @@ teragent/
 │   └── ai_permission_classifier.py  # AI-based permission classification
 ├── reliability/       # Reliability system
 │   ├── circuit_breaker.py  # 4 circuit breakers + manager
-│   ├── budget.py      # Step budget
-│   └── recovery.py    # Recovery manager
+│   ├── budget.py      # Step budget + CrossModelCostTracker
+│   └── recovery.py    # Recovery manager + DegradationChain + RateLimitHandler
 ├── context/           # Context management
 │   ├── context_window.py  # Token budget estimator
 │   ├── auto_compact.py    # Automatic context compaction
@@ -102,7 +102,18 @@ teragent/
 ├── tools/             # Tool system
 │   ├── base.py        # BaseTool ABC + ToolResult
 │   ├── registry.py    # ToolRegistry
-│   └── orchestrator.py # ToolOrchestrator
+│   ├── orchestrator.py # ToolOrchestrator
+│   └── desktop.py     # DesktopTool (desktop automation)
+├── router/            # Smart model routing
+│   └── model_router.py # ModelRouter, RoutingTable, PipelineManager
+├── long_horizon/      # Long-horizon autonomous tasks
+│   ├── manager.py     # LongHorizonTaskManager
+│   ├── checkpoint.py  # CheckpointStore
+│   ├── evaluator.py   # SelfEvaluator
+│   ├── strategy.py    # StrategySwitcher
+│   └── progress.py    # ProgressTracker
+├── benchmark/         # Benchmark framework
+│   └── runner.py      # BenchmarkRunner
 ├── intent/            # Intent classification
 │   ├── classifier.py  # IntentClassifier
 │   └── confirmation.py # ConfirmationGate

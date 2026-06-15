@@ -17,7 +17,7 @@ separately so that:
   - chat_friendly: Friendly non-programming chat
   - sub_agent: Autonomous sub-agent execution
 
-7 compiler types:
+8 compiler types:
   - default: Generic OpenAI-compatible format
   - glm: GLM recency effect optimization + Chinese constraints
   - anthropic: XML tag structured optimization (Claude preference)
@@ -25,6 +25,7 @@ separately so that:
   - deepseek_v4: DeepSeek V4 thinking mode + Flash/Pro (new)
   - glm_5: GLM-5 recency + long-horizon (new)
   - minimax_m3: MiniMax M3 multi-modal + MSA (new)
+  - glm_52: GLM-5.2 1M context + dual thinking (new)
 """
 
 import logging
@@ -36,6 +37,7 @@ from teragent.core.prompts.chat import (
     AGENT_PROMPT_DEFAULT,
     AGENT_PROMPT_GLM,
     AGENT_PROMPT_GLM_5,
+    AGENT_PROMPT_GLM_52,
     AGENT_PROMPT_MINIMAX_M3,
     CHAT_PROMPT_ANTHROPIC,
     CHAT_PROMPT_DEEPSEEK,
@@ -43,6 +45,7 @@ from teragent.core.prompts.chat import (
     CHAT_PROMPT_DEFAULT,
     CHAT_PROMPT_GLM,
     CHAT_PROMPT_GLM_5,
+    CHAT_PROMPT_GLM_52,
     CHAT_PROMPT_MINIMAX_M3,
 )
 from teragent.core.prompts.design import (
@@ -52,6 +55,7 @@ from teragent.core.prompts.design import (
     DESIGN_PROMPT_DEFAULT,
     DESIGN_PROMPT_GLM,
     DESIGN_PROMPT_GLM_5,
+    DESIGN_PROMPT_GLM_52,
     DESIGN_PROMPT_MINIMAX_M3,
 )
 from teragent.core.prompts.execute import (
@@ -62,6 +66,7 @@ from teragent.core.prompts.execute import (
     EXECUTE_PROMPT_DEFAULT,
     EXECUTE_PROMPT_GLM,
     EXECUTE_PROMPT_GLM_5,
+    EXECUTE_PROMPT_GLM_52,
     EXECUTE_PROMPT_MINIMAX_M3,
 )
 from teragent.core.prompts.plan import (
@@ -71,6 +76,7 @@ from teragent.core.prompts.plan import (
     PLAN_PROMPT_DEFAULT,
     PLAN_PROMPT_GLM,
     PLAN_PROMPT_GLM_5,
+    PLAN_PROMPT_GLM_52,
     PLAN_PROMPT_MINIMAX_M3,
     REPLAN_PROMPT_ANTHROPIC,
     REPLAN_PROMPT_DEEPSEEK,
@@ -78,6 +84,7 @@ from teragent.core.prompts.plan import (
     REPLAN_PROMPT_DEFAULT,
     REPLAN_PROMPT_GLM,
     REPLAN_PROMPT_GLM_5,
+    REPLAN_PROMPT_GLM_52,
     REPLAN_PROMPT_MINIMAX_M3,
 )
 from teragent.core.prompts.review import (
@@ -87,6 +94,7 @@ from teragent.core.prompts.review import (
     REVIEW_PROMPT_DEFAULT,
     REVIEW_PROMPT_GLM,
     REVIEW_PROMPT_GLM_5,
+    REVIEW_PROMPT_GLM_52,
     REVIEW_PROMPT_MINIMAX_M3,
 )
 from teragent.core.prompts.sub_agent import (
@@ -96,6 +104,7 @@ from teragent.core.prompts.sub_agent import (
     SUB_AGENT_PROMPT_DEFAULT,
     SUB_AGENT_PROMPT_GLM,
     SUB_AGENT_PROMPT_GLM_5,
+    SUB_AGENT_PROMPT_GLM_52,
     SUB_AGENT_PROMPT_MINIMAX_M3,
 )
 
@@ -112,6 +121,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": DESIGN_PROMPT_DEEPSEEK,
         "deepseek_v4": DESIGN_PROMPT_DEEPSEEK_V4,
         "glm_5": DESIGN_PROMPT_GLM_5,
+        "glm_52": DESIGN_PROMPT_GLM_52,
         "minimax_m3": DESIGN_PROMPT_MINIMAX_M3,
     },
     "plan": {
@@ -121,6 +131,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": PLAN_PROMPT_DEEPSEEK,
         "deepseek_v4": PLAN_PROMPT_DEEPSEEK_V4,
         "glm_5": PLAN_PROMPT_GLM_5,
+        "glm_52": PLAN_PROMPT_GLM_52,
         "minimax_m3": PLAN_PROMPT_MINIMAX_M3,
     },
     "replan": {
@@ -130,6 +141,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": REPLAN_PROMPT_DEEPSEEK,
         "deepseek_v4": REPLAN_PROMPT_DEEPSEEK_V4,
         "glm_5": REPLAN_PROMPT_GLM_5,
+        "glm_52": REPLAN_PROMPT_GLM_52,
         "minimax_m3": REPLAN_PROMPT_MINIMAX_M3,
     },
     "review": {
@@ -139,6 +151,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": REVIEW_PROMPT_DEEPSEEK,
         "deepseek_v4": REVIEW_PROMPT_DEEPSEEK_V4,
         "glm_5": REVIEW_PROMPT_GLM_5,
+        "glm_52": REVIEW_PROMPT_GLM_52,
         "minimax_m3": REVIEW_PROMPT_MINIMAX_M3,
     },
     "chat": {
@@ -148,6 +161,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": AGENT_PROMPT_DEEPSEEK,
         "deepseek_v4": AGENT_PROMPT_DEEPSEEK_V4,
         "glm_5": AGENT_PROMPT_GLM_5,
+        "glm_52": AGENT_PROMPT_GLM_52,
         "minimax_m3": AGENT_PROMPT_MINIMAX_M3,
     },
     "chat_friendly": {
@@ -157,6 +171,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": CHAT_PROMPT_DEEPSEEK,
         "deepseek_v4": CHAT_PROMPT_DEEPSEEK_V4,
         "glm_5": CHAT_PROMPT_GLM_5,
+        "glm_52": CHAT_PROMPT_GLM_52,
         "minimax_m3": CHAT_PROMPT_MINIMAX_M3,
     },
     "sub_agent": {
@@ -166,6 +181,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": SUB_AGENT_PROMPT_DEEPSEEK,
         "deepseek_v4": SUB_AGENT_PROMPT_DEEPSEEK_V4,
         "glm_5": SUB_AGENT_PROMPT_GLM_5,
+        "glm_52": SUB_AGENT_PROMPT_GLM_52,
         "minimax_m3": SUB_AGENT_PROMPT_MINIMAX_M3,
     },
     "execute": {
@@ -175,6 +191,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": EXECUTE_PROMPT_DEEPSEEK,
         "deepseek_v4": EXECUTE_PROMPT_DEEPSEEK_V4,
         "glm_5": EXECUTE_PROMPT_GLM_5,
+        "glm_52": EXECUTE_PROMPT_GLM_52,
         "minimax_m3": EXECUTE_PROMPT_MINIMAX_M3,
     },
     # CUDA/Triton specialized intent for GLM-5
@@ -190,6 +207,7 @@ _PROMPT_REGISTRY: dict[str, dict[str, str]] = {
         "deepseek": EXECUTE_PROMPT_DEEPSEEK,
         "deepseek_v4": EXECUTE_PROMPT_DEEPSEEK_V4,
         "glm_5": EXECUTE_PROMPT_GLM_5,
+        "glm_52": EXECUTE_PROMPT_GLM_52,
         "minimax_m3": EXECUTE_PROMPT_MINIMAX_M3,
     },
 }
@@ -228,6 +246,7 @@ def get_system_prompt_for_intent(
         fallback_map = {
             "deepseek_v4": "deepseek",
             "glm_5": "glm",
+            "glm_52": "glm_5",
             "minimax_m3": "default",
         }
         fallback_type = fallback_map.get(compiler_type)
@@ -253,7 +272,7 @@ def list_intents() -> list[str]:
 
 def list_compiler_types() -> list[str]:
     """List all available compiler type names."""
-    return ["default", "glm", "anthropic", "deepseek", "deepseek_v4", "glm_5", "minimax_m3"]
+    return ["default", "glm", "anthropic", "deepseek", "deepseek_v4", "glm_5", "glm_52", "minimax_m3"]
 
 
 __all__ = [
@@ -263,28 +282,28 @@ __all__ = [
     "list_compiler_types",
     # Design intent
     "DESIGN_PROMPT_DEFAULT", "DESIGN_PROMPT_GLM", "DESIGN_PROMPT_ANTHROPIC", "DESIGN_PROMPT_DEEPSEEK",
-    "DESIGN_PROMPT_DEEPSEEK_V4", "DESIGN_PROMPT_GLM_5", "DESIGN_PROMPT_MINIMAX_M3",
+    "DESIGN_PROMPT_DEEPSEEK_V4", "DESIGN_PROMPT_GLM_5", "DESIGN_PROMPT_GLM_52", "DESIGN_PROMPT_MINIMAX_M3",
     # Plan intent
     "PLAN_PROMPT_DEFAULT", "PLAN_PROMPT_GLM", "PLAN_PROMPT_ANTHROPIC", "PLAN_PROMPT_DEEPSEEK",
-    "PLAN_PROMPT_DEEPSEEK_V4", "PLAN_PROMPT_GLM_5", "PLAN_PROMPT_MINIMAX_M3",
+    "PLAN_PROMPT_DEEPSEEK_V4", "PLAN_PROMPT_GLM_5", "PLAN_PROMPT_GLM_52", "PLAN_PROMPT_MINIMAX_M3",
     # Replan intent
     "REPLAN_PROMPT_DEFAULT", "REPLAN_PROMPT_GLM", "REPLAN_PROMPT_ANTHROPIC", "REPLAN_PROMPT_DEEPSEEK",
-    "REPLAN_PROMPT_DEEPSEEK_V4", "REPLAN_PROMPT_GLM_5", "REPLAN_PROMPT_MINIMAX_M3",
+    "REPLAN_PROMPT_DEEPSEEK_V4", "REPLAN_PROMPT_GLM_5", "REPLAN_PROMPT_GLM_52", "REPLAN_PROMPT_MINIMAX_M3",
     # Review intent
     "REVIEW_PROMPT_DEFAULT", "REVIEW_PROMPT_GLM", "REVIEW_PROMPT_ANTHROPIC", "REVIEW_PROMPT_DEEPSEEK",
-    "REVIEW_PROMPT_DEEPSEEK_V4", "REVIEW_PROMPT_GLM_5", "REVIEW_PROMPT_MINIMAX_M3",
+    "REVIEW_PROMPT_DEEPSEEK_V4", "REVIEW_PROMPT_GLM_5", "REVIEW_PROMPT_GLM_52", "REVIEW_PROMPT_MINIMAX_M3",
     # Chat intent (agent mode)
     "AGENT_PROMPT_DEFAULT", "AGENT_PROMPT_GLM", "AGENT_PROMPT_ANTHROPIC", "AGENT_PROMPT_DEEPSEEK",
-    "AGENT_PROMPT_DEEPSEEK_V4", "AGENT_PROMPT_GLM_5", "AGENT_PROMPT_MINIMAX_M3",
+    "AGENT_PROMPT_DEEPSEEK_V4", "AGENT_PROMPT_GLM_5", "AGENT_PROMPT_GLM_52", "AGENT_PROMPT_MINIMAX_M3",
     # Chat intent (friendly mode)
     "CHAT_PROMPT_DEFAULT", "CHAT_PROMPT_GLM", "CHAT_PROMPT_ANTHROPIC", "CHAT_PROMPT_DEEPSEEK",
-    "CHAT_PROMPT_DEEPSEEK_V4", "CHAT_PROMPT_GLM_5", "CHAT_PROMPT_MINIMAX_M3",
+    "CHAT_PROMPT_DEEPSEEK_V4", "CHAT_PROMPT_GLM_5", "CHAT_PROMPT_GLM_52", "CHAT_PROMPT_MINIMAX_M3",
     # Sub-agent intent
     "SUB_AGENT_PROMPT_DEFAULT", "SUB_AGENT_PROMPT_GLM", "SUB_AGENT_PROMPT_ANTHROPIC", "SUB_AGENT_PROMPT_DEEPSEEK",
-    "SUB_AGENT_PROMPT_DEEPSEEK_V4", "SUB_AGENT_PROMPT_GLM_5", "SUB_AGENT_PROMPT_MINIMAX_M3",
+    "SUB_AGENT_PROMPT_DEEPSEEK_V4", "SUB_AGENT_PROMPT_GLM_5", "SUB_AGENT_PROMPT_GLM_52", "SUB_AGENT_PROMPT_MINIMAX_M3",
     # Execute intent
     "EXECUTE_PROMPT_DEFAULT", "EXECUTE_PROMPT_GLM", "EXECUTE_PROMPT_ANTHROPIC", "EXECUTE_PROMPT_DEEPSEEK",
-    "EXECUTE_PROMPT_DEEPSEEK_V4", "EXECUTE_PROMPT_GLM_5", "EXECUTE_PROMPT_MINIMAX_M3",
+    "EXECUTE_PROMPT_DEEPSEEK_V4", "EXECUTE_PROMPT_GLM_5", "EXECUTE_PROMPT_GLM_52", "EXECUTE_PROMPT_MINIMAX_M3",
     # CUDA/Triton specialized prompt
     "CUDA_TRITON_PROMPT_GLM_5",
 ]

@@ -132,10 +132,10 @@ class GLM5Compiler(TAPCompiler):
         messages.append({"role": "user", "content": final_instruction})
 
         # 7. Tail reinforcement (Recency Effect — 最后一条消息强化关键信息)
+        # 修复 H22: 使用 system 消息代替伪造的 assistant 消息
         tail_content = self._build_tail_reinforcement(request)
         if tail_content:
-            messages.append({"role": "assistant", "content": "收到指令，正在执行。"})
-            messages.append({"role": "user", "content": tail_content})
+            messages.append({"role": "system", "content": f"[尾部强化 — 务必遵守]\n{tail_content}"})
 
         compiled = CompiledPrompt(messages=messages, max_tokens=16384)
 

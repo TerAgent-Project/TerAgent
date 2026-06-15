@@ -57,6 +57,19 @@ thinking_mode = "deep"                  # GLM-5 默认深度推理
 long_horizon_enabled = true             # 启用长程任务模式（8小时自治）
 
 # =============================================================================
+# GLM-5.2 — 旗舰模型（1M 上下文 + 双思考模式）
+# =============================================================================
+[drivers.openai_compatible.glm_52]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+model = "glm-5.2"
+compiler = "glm_52"
+max_context_tokens = 1_000_000          # GLM-5.2 1M 上下文
+max_output_tokens = 128_000
+thinking_mode = "auto"                  # auto: Compiler 自动选择 High/Max
+long_horizon_enabled = true             # 继承 GLM-5 的长程任务能力
+
+# =============================================================================
 # 执行流水线 — 多模型协同分配
 # =============================================================================
 [execution.pipeline]

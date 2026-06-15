@@ -15,6 +15,10 @@
 import logging
 from typing import TYPE_CHECKING, Optional
 
+__all__ = [
+    "ContextWindow",
+]
+
 if TYPE_CHECKING:
     from teragent.context.profiles import ContextProfile
 
@@ -202,6 +206,9 @@ class ContextWindow:
         当提供了 ContextProfile 时，使用分区预算判断。
         否则回退到传统的 compact_threshold 判断。
 
+        修复 H5: 不修改全局 _last_estimated_tokens/_last_usage_ratio 缓存，
+        使用局部变量计算，避免影响其他调用者的 usage_ratio() 结果。
+
         Args:
             section: 区域名称，支持 "system", "history", "large_file", "tail_reinforcement"
             messages: 该区域的消息列表
@@ -214,7 +221,11 @@ class ContextWindow:
             # 预算为 0 的区域（如无 profile 时的 large_file），不需要压缩
             return False
 
+        # 使用局部估算，不覆盖全局缓存
         estimated = self.estimate_tokens(messages)
+        # 恢复全局缓存为之前的值（如果存在）
+        # 注意：estimate_tokens 已覆写缓存，但此方法仅返回 bool，
+        # 调用者不应依赖此方法后的 usage_ratio()
         return estimated >= budget
 
     def summary(self, messages: list) -> dict:

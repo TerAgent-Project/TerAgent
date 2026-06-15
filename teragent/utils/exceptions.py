@@ -1,3 +1,16 @@
+__all__ = [
+    "AgentError",
+    "ContextWindowExceededError",
+    "DependencyExplosionError",
+    "ModelUnavailableError",
+    "PermissionDenied",
+    "PipelineStateError",
+    "PlanParseError",
+    "ReplanMeltdownError",
+    "SandboxViolation",
+]
+
+
 class AgentError(Exception):
     """所有 Agent 业务异常的基类"""
     def __init__(self, message: str) -> None:

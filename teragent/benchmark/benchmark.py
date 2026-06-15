@@ -1,15 +1,17 @@
-"""teragent.benchmark.benchmark — Performance benchmark framework for three-model evaluation
+"""teragent.benchmark.benchmark — Performance benchmark framework for four-model evaluation
 
 Provides:
   1. CompilationBenchmark: Measure TAPRequest→CompiledPrompt compilation latency
   2. LatencyBenchmark: Measure end-to-end first-token and total latency (with MockAdapter)
-  3. ContextManagementBenchmark: Test 1M context (V4/M3) and 200K compression (GLM-5)
+  3. ContextManagementBenchmark: Test 1M context (V4/M3/GLM-5.2) and 200K compression (GLM-5)
   4. MultimodalBenchmark: Test image/video processing latency with M3
   5. LongHorizonBenchmark: Simulate long-horizon task stability
   6. CostEfficiencyBenchmark: Measure token consumption and cost metrics
   7. RouterBenchmark: Test ModelRouter decision accuracy and latency
   8. FaultRecoveryBenchmark: Test circuit breaker and degradation chain analysis
-  9. BenchmarkRunner: Orchestrate all benchmarks and generate reports
+  9. GLM52DualThinkingBenchmark: Test GLM-5.2 High vs Max thinking mode performance
+ 10. VisionCoordinationBenchmark: Test GLM-5V-Turbo + GLM-5.2 coordination performance
+ 11. BenchmarkRunner: Orchestrate all benchmarks and generate reports
 
 Design principles:
   - All benchmarks use MockAdapter (no real API calls) for deterministic results
@@ -17,6 +19,7 @@ Design principles:
   - BenchmarkRunner generates comprehensive reports with cross-model comparison
   - Statistical analysis: mean, median, p95, p99, std_dev
   - All results are dataclass-based for serialization
+  - GLM-5.2 benchmarks include dual thinking mode (High/Max) and vision coordination
 """
 
 from __future__ import annotations
@@ -30,6 +33,24 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+__all__ = [
+    "BaseBenchmark",
+    "BenchmarkMetric",
+    "BenchmarkReport",
+    "BenchmarkResult",
+    "BenchmarkRunner",
+    "CompilationBenchmark",
+    "ContextManagementBenchmark",
+    "CostEfficiencyBenchmark",
+    "FaultRecoveryBenchmark",
+    "GLM52DualThinkingBenchmark",
+    "LatencyBenchmark",
+    "LongHorizonBenchmark",
+    "MultimodalBenchmark",
+    "RouterBenchmark",
+    "VisionCoordinationBenchmark",
+]
 
 from teragent.core.adapters.mock import MockAdapter
 from teragent.core.compiler import TAPCompilerRegistry
@@ -276,13 +297,16 @@ class BenchmarkReport:
 # Intent types for benchmark
 INTENTS = ["design", "plan", "execute", "review", "chat", "code_generation"]
 
-# Compiler names for the three new models
-THREE_MODEL_COMPILERS = ["deepseek_v4", "minimax_m3", "glm_5"]
+# Compiler names for the four models
+FOUR_MODEL_COMPILERS = ["deepseek_v4", "minimax_m3", "glm_5", "glm_52"]
 
-# All 9 compiler names
+# Backward compatibility alias
+THREE_MODEL_COMPILERS = FOUR_MODEL_COMPILERS
+
+# All compiler names (including legacy and four new models)
 ALL_COMPILERS = [
     "default", "glm", "anthropic", "deepseek",
-    "deepseek_v4", "minimax_m3", "glm_5",
+    "deepseek_v4", "minimax_m3", "glm_5", "glm_52",
 ]
 
 # Model names for routing
@@ -291,6 +315,9 @@ MODEL_DRIVERS = {
     "deepseek_v4_pro": "openai_compatible.deepseek_v4_pro",
     "minimax_m3": "openai_compatible.minimax_m3",
     "glm_5": "openai_compatible.glm_5",
+    "glm_52_high": "openai_compatible.glm_52_high",
+    "glm_52_max": "openai_compatible.glm_52_max",
+    "glm_5v_turbo": "openai_compatible.glm_5v_turbo",
 }
 
 
@@ -405,7 +432,7 @@ def make_tap_request(
 class BaseBenchmark(ABC):
     """Abstract base class for benchmark suites.
 
-    Each benchmark suite measures a specific aspect of the three-model
+    Each benchmark suite measures a specific aspect of the four-model
     adaptation performance. All suites use MockAdapter for deterministic
     results without real API calls.
     """
@@ -439,9 +466,10 @@ class CompilationBenchmark(BaseBenchmark):
     measures the overhead of the compilation logic itself.
 
     Scenarios:
-      - Per-compiler compilation latency across all 9 compilers
-      - Per-intent compilation latency for the 3 new compilers
+      - Per-compiler compilation latency across all compilers
+      - Per-intent compilation latency for the 4 new compilers
       - Large context compilation latency (50K+ tokens context)
+      - GLM-5.2 High vs Max thinking mode compilation latency
     """
 
     def run(self) -> list[BenchmarkResult]:
@@ -495,8 +523,8 @@ class CompilationBenchmark(BaseBenchmark):
 
         results.append(all_compiler_result)
 
-        # Scenario 2: Per-intent latency for 3 new compilers
-        for compiler_name in THREE_MODEL_COMPILERS:
+        # Scenario 2: Per-intent latency for 4 new compilers
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -530,7 +558,7 @@ class CompilationBenchmark(BaseBenchmark):
             results.append(result)
 
         # Scenario 3: Large context compilation
-        for compiler_name in THREE_MODEL_COMPILERS:
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -563,6 +591,37 @@ class CompilationBenchmark(BaseBenchmark):
 
             results.append(result)
 
+        # Scenario 4: GLM-5.2 High vs Max thinking mode compilation
+        glm52_cls = TAPCompilerRegistry.get("glm_52")
+        if glm52_cls is not None:
+            for thinking_level in ("high", "max"):
+                compiler = glm52_cls()
+                glm52_result = BenchmarkResult(
+                    suite_name="CompilationBenchmark",
+                    model=f"glm_52_{thinking_level}",
+                    metadata={"scenario": f"glm52_thinking_{thinking_level}"},
+                )
+
+                for intent in INTENTS:
+                    samples: list[float] = []
+                    for _ in range(self.iterations):
+                        request = make_tap_request(
+                            intent=intent,
+                            thinking_mode=thinking_level,
+                        )
+                        start = time.perf_counter()
+                        compiler.compile(request)
+                        elapsed = (time.perf_counter() - start) * 1000
+                        samples.append(elapsed)
+
+                    glm52_result.add_metric(BenchmarkMetric.from_samples(
+                        name=f"compile_latency_{thinking_level}_{intent}",
+                        samples=samples,
+                        unit="ms",
+                    ))
+
+                results.append(glm52_result)
+
         return results
 
 
@@ -584,7 +643,7 @@ class LatencyBenchmark(BaseBenchmark):
 
         adapter = MockAdapter(delay=0.05)  # 50ms simulated delay
 
-        for compiler_name in THREE_MODEL_COMPILERS:
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -667,8 +726,9 @@ class ContextManagementBenchmark(BaseBenchmark):
     and whether the compiled prompt stays within the model's context limit.
 
     Scenarios:
-      - V4/M3: 1M context — test large context compilation and prompt sizing
+      - V4/M3/GLM-5.2: 1M context — test large context compilation and prompt sizing
       - GLM-5: 200K context — test extreme compression effectiveness
+      - GLM-5.2: 1M context — test smart partitioning with retention tracking
       - Context budget utilization across models
     """
 
@@ -684,7 +744,7 @@ class ContextManagementBenchmark(BaseBenchmark):
             "1M": 250_000,   # ~1M chars ≈ 250K tokens
         }
 
-        for compiler_name in THREE_MODEL_COMPILERS:
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -783,7 +843,7 @@ class MultimodalBenchmark(BaseBenchmark):
 
     Scenarios:
       - M3 native multimodal compilation (image, video, desktop)
-      - V4/GLM-5 multimodal degradation overhead
+      - V4/GLM-5/GLM-5.2 multimodal degradation overhead
       - Mixed content (multi-image, image+video) compilation
     """
 
@@ -792,7 +852,7 @@ class MultimodalBenchmark(BaseBenchmark):
         import teragent.core.compilers  # noqa: F401
 
         # Scenario 1: M3 native multimodal vs degradation
-        for compiler_name in THREE_MODEL_COMPILERS:
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -1110,6 +1170,18 @@ class CostEfficiencyBenchmark(BaseBenchmark):
             "prompt_per_million": 2.0,
             "completion_per_million": 8.0,
         },
+        "glm_52_high": {
+            "prompt_per_million": 2.0,
+            "completion_per_million": 8.0,
+        },
+        "glm_52_max": {
+            "prompt_per_million": 2.0,
+            "completion_per_million": 8.0,
+        },
+        "glm_5v_turbo": {
+            "prompt_per_million": 0.5,
+            "completion_per_million": 1.0,
+        },
     }
 
     def run(self) -> list[BenchmarkResult]:
@@ -1118,7 +1190,7 @@ class CostEfficiencyBenchmark(BaseBenchmark):
 
         adapter = MockAdapter(delay=0.01)
 
-        for compiler_name in THREE_MODEL_COMPILERS:
+        for compiler_name in FOUR_MODEL_COMPILERS:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -1435,6 +1507,497 @@ class FaultRecoveryBenchmark(BaseBenchmark):
 
 
 # =========================================================================
+# GLM-5.2 Dual Thinking Benchmark
+# =========================================================================
+
+
+class GLM52DualThinkingBenchmark(BaseBenchmark):
+    """Benchmark: GLM-5.2 High vs Max thinking mode performance.
+
+    Tests the ThinkingModeRouter's decision quality, the compilation
+    overhead difference between High and Max modes, PreservedThinking
+    effectiveness, and DynamicThinkingModeManager stability.
+
+    Scenarios:
+      - ThinkingModeRouter routing accuracy across intents
+      - High vs Max compilation latency comparison
+      - PreservedThinking overhead measurement
+      - Dynamic mode switching stability in long-horizon simulation
+      - Budget-aware routing correctness
+    """
+
+    def run(self) -> list[BenchmarkResult]:
+        results: list[BenchmarkResult] = []
+        import teragent.core.compilers  # noqa: F401
+        from teragent.core.compilers.glm_52 import (
+            ThinkingModeRouter,
+            ThinkingModeDecision,
+            DynamicThinkingModeManager,
+            PreservedThinkingManager,
+            _THINKING_COST_MULTIPLIERS,
+        )
+
+        # Scenario 1: ThinkingModeRouter accuracy
+        router_result = BenchmarkResult(
+            suite_name="GLM52DualThinkingBenchmark",
+            model="glm_52",
+            metadata={"scenario": "thinking_mode_router_accuracy"},
+        )
+
+        thinking_router = ThinkingModeRouter()
+
+        # Expected routing: design/plan/review → max, chat → high, execute/code_generation → depends
+        expected_modes: dict[str, str] = {
+            "design": "max",
+            "plan": "max",
+            "review": "max",
+            "chat": "high",
+        }
+
+        correct_routing = 0
+        total_routing = 0
+
+        for intent, expected_level in expected_modes.items():
+            for _ in range(self.iterations):
+                request = make_tap_request(intent=intent)
+                decision = thinking_router.select(request)
+                total_routing += 1
+                if decision.level == expected_level:
+                    correct_routing += 1
+
+        if total_routing > 0:
+            router_result.add_metric(BenchmarkMetric(
+                name="thinking_mode_routing_accuracy",
+                value=correct_routing / total_routing,
+                unit="ratio",
+                sample_count=total_routing,
+            ))
+
+        # Test budget-aware routing
+        budget_correct = 0
+        budget_total = 0
+        for _ in range(self.iterations):
+            request = make_tap_request(intent="design")
+            # Very low budget → should force High mode
+            decision = thinking_router.select(request, budget_remaining=0.03)
+            budget_total += 1
+            if decision.level == "high":
+                budget_correct += 1
+
+        if budget_total > 0:
+            router_result.add_metric(BenchmarkMetric(
+                name="budget_aware_routing_accuracy",
+                value=budget_correct / budget_total,
+                unit="ratio",
+                sample_count=budget_total,
+            ))
+
+        results.append(router_result)
+
+        # Scenario 2: High vs Max compilation latency comparison
+        glm52_cls = TAPCompilerRegistry.get("glm_52")
+        if glm52_cls is not None:
+            compiler = glm52_cls()
+
+            for thinking_level in ("high", "max"):
+                mode_result = BenchmarkResult(
+                    suite_name="GLM52DualThinkingBenchmark",
+                    model=f"glm_52_{thinking_level}",
+                    metadata={"scenario": f"thinking_mode_{thinking_level}_latency"},
+                )
+
+                for intent in INTENTS:
+                    samples: list[float] = []
+                    for _ in range(self.iterations):
+                        request = make_tap_request(
+                            intent=intent,
+                            thinking_mode=thinking_level,
+                        )
+                        start = time.perf_counter()
+                        compiled = compiler.compile(request)
+                        elapsed = (time.perf_counter() - start) * 1000
+                        samples.append(elapsed)
+
+                    mode_result.add_metric(BenchmarkMetric.from_samples(
+                        name=f"compile_latency_{thinking_level}_{intent}",
+                        samples=samples,
+                        unit="ms",
+                    ))
+
+                    # Also record compiled prompt size for comparison
+                    prompt_size = sum(
+                        len(str(msg.get("content", "")))
+                        for msg in compiled.messages
+                    ) if compiled.messages else 0
+                    mode_result.add_metric(BenchmarkMetric(
+                        name=f"compiled_size_{thinking_level}_{intent}",
+                        value=float(prompt_size),
+                        unit="chars",
+                        sample_count=1,
+                    ))
+
+                results.append(mode_result)
+
+        # Scenario 3: PreservedThinking overhead
+        pt_result = BenchmarkResult(
+            suite_name="GLM52DualThinkingBenchmark",
+            model="glm_52",
+            metadata={"scenario": "preserved_thinking_overhead"},
+        )
+
+        pt_manager = PreservedThinkingManager()
+
+        # Simulate multi-turn reasoning accumulation
+        reasoning_sizes: list[int] = []
+        overhead_samples: list[float] = []
+
+        for step in range(20):
+            # Record some mock reasoning content
+            mock_reasoning = f"步骤 {step + 1} 的推理过程：分析问题→拆解子任务→逐步求解。" * 5
+            start = time.perf_counter()
+            pt_manager.record_reasoning(mock_reasoning)
+            elapsed = (time.perf_counter() - start) * 1000
+            overhead_samples.append(elapsed)
+            reasoning_sizes.append(len(pt_manager.reasoning_history))
+
+        pt_result.add_metric(BenchmarkMetric.from_samples(
+            name="preserved_thinking_record_overhead",
+            samples=overhead_samples,
+            unit="ms",
+        ))
+
+        # Test reasoning retrieval overhead
+        retrieval_samples: list[float] = []
+        for _ in range(self.iterations):
+            start = time.perf_counter()
+            _history = pt_manager.reasoning_history
+            elapsed = (time.perf_counter() - start) * 1000
+            retrieval_samples.append(elapsed)
+
+        pt_result.add_metric(BenchmarkMetric.from_samples(
+            name="preserved_thinking_retrieval_overhead",
+            samples=retrieval_samples,
+            unit="ms",
+        ))
+
+        results.append(pt_result)
+
+        # Scenario 4: DynamicThinkingModeManager stability
+        dtm_result = BenchmarkResult(
+            suite_name="GLM52DualThinkingBenchmark",
+            model="glm_52",
+            metadata={"scenario": "dynamic_mode_switching"},
+        )
+
+        dtm = DynamicThinkingModeManager(thinking_router)
+        switch_counts: list[int] = []
+        mode_consistency: list[float] = []
+
+        # Simulate a 50-step long-horizon task
+        for sim_run in range(5):
+            dtm.reset()
+            current_mode = "high"
+
+            step_modes: list[str] = []
+            for step in range(50):
+                # Alternate between simple and complex sub-tasks
+                if step % 10 < 5:
+                    intent = "execute"
+                    instruction = "继续执行"
+                else:
+                    intent = "design"
+                    instruction = "重构并优化"
+
+                request = make_tap_request(intent=intent, instruction=instruction)
+                decision = dtm.should_switch(request, step)
+
+                if decision.level != current_mode:
+                    dtm.apply_switch(decision, step)
+                    current_mode = decision.level
+
+                step_modes.append(current_mode)
+
+            switch_counts.append(dtm.switch_count)
+
+            # Measure mode consistency: how often the mode matches the expected pattern
+            # (high for execute, max for design)
+            expected_patterns = []
+            for step in range(50):
+                if step % 10 < 5:
+                    expected_patterns.append("high")
+                else:
+                    expected_patterns.append("max")
+
+            matches = sum(1 for a, e in zip(step_modes, expected_patterns) if a == e)
+            consistency = matches / len(expected_patterns) if expected_patterns else 0
+            mode_consistency.append(consistency)
+
+        dtm_result.add_metric(BenchmarkMetric.from_samples(
+            name="mode_switch_count",
+            samples=[float(c) for c in switch_counts],
+            unit="count",
+        ))
+        dtm_result.add_metric(BenchmarkMetric.from_samples(
+            name="mode_consistency_rate",
+            samples=mode_consistency,
+            unit="ratio",
+        ))
+
+        results.append(dtm_result)
+
+        return results
+
+
+# =========================================================================
+# Vision Coordination Benchmark
+# =========================================================================
+
+
+class VisionCoordinationBenchmark(BaseBenchmark):
+    """Benchmark: GLM-5V-Turbo + GLM-5.2 coordination performance.
+
+    Tests the coordination workflow between the vision model (GLM-5V-Turbo)
+    and the coding model (GLM-5.2), measuring compilation overhead for
+    vision-aware requests, context transfer efficiency, and degradation
+    handling.
+
+    Scenarios:
+      - GLM-5V-Turbo compiler compilation latency
+      - Vision coordination context transfer overhead
+      - Sequential vs parallel vs verify mode performance
+      - Degradation to text-only mode when vision unavailable
+      - CoordinationConfig validation overhead
+    """
+
+    def run(self) -> list[BenchmarkResult]:
+        results: list[BenchmarkResult] = []
+        import teragent.core.compilers  # noqa: F401
+        from teragent.coordination.glm5v_coordinator import (
+            CoordinationConfig,
+            CoordinationMode,
+            GLM52VCoordinatedWorkflow,
+        )
+
+        # Scenario 1: GLM-5V-Turbo compiler compilation latency
+        vision_cls = TAPCompilerRegistry.get("glm_5v_turbo")
+        if vision_cls is not None:
+            vision_compiler = vision_cls()
+
+            vision_result = BenchmarkResult(
+                suite_name="VisionCoordinationBenchmark",
+                model="glm_5v_turbo",
+                metadata={"scenario": "vision_compiler_latency"},
+            )
+
+            # Text-only baseline
+            baseline_samples: list[float] = []
+            for _ in range(self.iterations):
+                request = make_tap_request(intent="execute", has_multimodal=False)
+                start = time.perf_counter()
+                vision_compiler.compile(request)
+                elapsed = (time.perf_counter() - start) * 1000
+                baseline_samples.append(elapsed)
+            vision_result.add_metric(BenchmarkMetric.from_samples(
+                name="vision_text_only_latency",
+                samples=baseline_samples,
+                unit="ms",
+            ))
+
+            # With multimodal content
+            multimodal_samples: list[float] = []
+            for _ in range(self.iterations):
+                request = make_tap_request(intent="execute", has_multimodal=True)
+                start = time.perf_counter()
+                vision_compiler.compile(request)
+                elapsed = (time.perf_counter() - start) * 1000
+                multimodal_samples.append(elapsed)
+            vision_result.add_metric(BenchmarkMetric.from_samples(
+                name="vision_multimodal_latency",
+                samples=multimodal_samples,
+                unit="ms",
+            ))
+
+            # Multimodal overhead
+            if baseline_samples and multimodal_samples:
+                overhead = statistics.mean(multimodal_samples) - statistics.mean(baseline_samples)
+                vision_result.add_metric(BenchmarkMetric(
+                    name="vision_multimodal_overhead",
+                    value=overhead,
+                    unit="ms",
+                    sample_count=1,
+                ))
+
+            results.append(vision_result)
+
+        # Scenario 2: CoordinationConfig validation and creation overhead
+        config_result = BenchmarkResult(
+            suite_name="VisionCoordinationBenchmark",
+            model="coordination_config",
+            metadata={"scenario": "config_creation_overhead"},
+        )
+
+        config_samples: list[float] = []
+        for _ in range(self.iterations):
+            start = time.perf_counter()
+            _config = CoordinationConfig(
+                mode="sequential",
+                vision_model="glm-5v-turbo",
+                coding_model="glm-5.2",
+                context_sharing=True,
+                max_verification_rounds=2,
+            )
+            elapsed = (time.perf_counter() - start) * 1000
+            config_samples.append(elapsed)
+
+        config_result.add_metric(BenchmarkMetric.from_samples(
+            name="config_creation_latency",
+            samples=config_samples,
+            unit="ms",
+        ))
+
+        # Test from_dict creation
+        from_dict_samples: list[float] = []
+        for _ in range(self.iterations):
+            start = time.perf_counter()
+            _config = CoordinationConfig.from_dict({
+                "enabled": True,
+                "coordination_mode": "verify",
+                "vision_model": "glm-5v-turbo",
+                "coding_model": "glm-5.2",
+                "max_verification_rounds": 3,
+            })
+            elapsed = (time.perf_counter() - start) * 1000
+            from_dict_samples.append(elapsed)
+
+        config_result.add_metric(BenchmarkMetric.from_samples(
+            name="config_from_dict_latency",
+            samples=from_dict_samples,
+            unit="ms",
+        ))
+
+        results.append(config_result)
+
+        # Scenario 3: Coordination workflow initialization overhead
+        workflow_result = BenchmarkResult(
+            suite_name="VisionCoordinationBenchmark",
+            model="coordination_workflow",
+            metadata={"scenario": "workflow_initialization"},
+        )
+
+        init_samples: list[float] = []
+        for _ in range(self.iterations):
+            config = CoordinationConfig(mode="sequential")
+            start = time.perf_counter()
+            _workflow = GLM52VCoordinatedWorkflow(config=config)
+            elapsed = (time.perf_counter() - start) * 1000
+            init_samples.append(elapsed)
+
+        workflow_result.add_metric(BenchmarkMetric.from_samples(
+            name="workflow_init_latency",
+            samples=init_samples,
+            unit="ms",
+        ))
+
+        # Test workflow availability check
+        check_samples: list[float] = []
+        for _ in range(self.iterations):
+            config = CoordinationConfig(enabled=False)
+            workflow = GLM52VCoordinatedWorkflow(config=config)
+            start = time.perf_counter()
+            _available = workflow.is_available
+            elapsed = (time.perf_counter() - start) * 1000
+            check_samples.append(elapsed)
+
+        workflow_result.add_metric(BenchmarkMetric.from_samples(
+            name="workflow_availability_check_latency",
+            samples=check_samples,
+            unit="ms",
+        ))
+
+        results.append(workflow_result)
+
+        # Scenario 4: GLM-5.2 with vision-aware compilation
+        glm52_cls = TAPCompilerRegistry.get("glm_52")
+        if glm52_cls is not None:
+            glm52 = glm52_cls()
+
+            vision_aware_result = BenchmarkResult(
+                suite_name="VisionCoordinationBenchmark",
+                model="glm_52_vision_aware",
+                metadata={"scenario": "glm52_vision_aware_compilation"},
+            )
+
+            # GLM-5.2 compilation with multimodal (degradation scenario)
+            degrade_samples: list[float] = []
+            for _ in range(self.iterations):
+                request = make_tap_request(intent="execute", has_multimodal=True)
+                start = time.perf_counter()
+                compiled = glm52.compile(request)
+                elapsed = (time.perf_counter() - start) * 1000
+                degrade_samples.append(elapsed)
+
+            vision_aware_result.add_metric(BenchmarkMetric.from_samples(
+                name="glm52_multimodal_degradation_latency",
+                samples=degrade_samples,
+                unit="ms",
+            ))
+
+            # Compare with text-only GLM-5.2
+            text_only_samples: list[float] = []
+            for _ in range(self.iterations):
+                request = make_tap_request(intent="execute", has_multimodal=False)
+                start = time.perf_counter()
+                glm52.compile(request)
+                elapsed = (time.perf_counter() - start) * 1000
+                text_only_samples.append(elapsed)
+
+            vision_aware_result.add_metric(BenchmarkMetric.from_samples(
+                name="glm52_text_only_latency",
+                samples=text_only_samples,
+                unit="ms",
+            ))
+
+            # Degradation overhead
+            if degrade_samples and text_only_samples:
+                overhead = statistics.mean(degrade_samples) - statistics.mean(text_only_samples)
+                vision_aware_result.add_metric(BenchmarkMetric(
+                    name="glm52_degradation_overhead",
+                    value=overhead,
+                    unit="ms",
+                    sample_count=1,
+                ))
+
+            results.append(vision_aware_result)
+
+        # Scenario 5: Cross-mode comparison (sequential, verify, parallel)
+        mode_result = BenchmarkResult(
+            suite_name="VisionCoordinationBenchmark",
+            model="coordination_modes",
+            metadata={"scenario": "coordination_mode_comparison"},
+        )
+
+        for mode_name in ("sequential", "verify", "parallel"):
+            mode_config = CoordinationConfig(mode=mode_name)
+            mode_init_samples: list[float] = []
+            for _ in range(self.iterations):
+                start = time.perf_counter()
+                _workflow = GLM52VCoordinatedWorkflow(config=mode_config)
+                _ = _workflow.is_available
+                elapsed = (time.perf_counter() - start) * 1000
+                mode_init_samples.append(elapsed)
+
+            mode_result.add_metric(BenchmarkMetric.from_samples(
+                name=f"mode_{mode_name}_init_latency",
+                samples=mode_init_samples,
+                unit="ms",
+            ))
+
+        results.append(mode_result)
+
+        return results
+
+
+# =========================================================================
 # Benchmark Runner
 # =========================================================================
 
@@ -1470,7 +2033,8 @@ class BenchmarkRunner:
                     If None, all suites are run.
                     Available: "compilation", "latency", "context",
                                "multimodal", "long_horizon", "cost",
-                               "router", "fault_recovery"
+                               "router", "fault_recovery",
+                               "glm52_dual_thinking", "vision_coordination"
         """
         self.iterations = iterations
         self.seed = seed
@@ -1485,6 +2049,8 @@ class BenchmarkRunner:
             "cost": CostEfficiencyBenchmark,
             "router": RouterBenchmark,
             "fault_recovery": FaultRecoveryBenchmark,
+            "glm52_dual_thinking": GLM52DualThinkingBenchmark,
+            "vision_coordination": VisionCoordinationBenchmark,
         }
 
     def run_all(self) -> BenchmarkReport:

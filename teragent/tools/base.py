@@ -20,6 +20,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
+__all__ = [
+    "BaseTool",
+    "ToolResult",
+]
+
 from teragent.core.types import ToolSafety
 
 logger = logging.getLogger(__name__)
@@ -147,16 +152,22 @@ class BaseTool(ABC):
             (allowed, reason) — 是否允许执行 + 原因
         """
         # 默认实现：根据安全级别检查权限
+        # 权限层级：READ_ONLY < SAFE_WRITE < HIGH_RISK < DESTRUCTIVE
+        # 对应最低权限要求：0 < 1 < 2 < 3
         if self._safety == ToolSafety.READ_ONLY:
             return True, ""
+        if self._safety == ToolSafety.SAFE_WRITE:
+            # SAFE_WRITE 需要 PLAN 权限（level >= 1）
+            if permission_level < 1:
+                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 1）"
         if self._safety == ToolSafety.HIGH_RISK:
             # HIGH_RISK 需要 BYPASS 权限（level >= 2）
             if permission_level < 2:
-                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}）"
+                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 2）"
         if self._safety == ToolSafety.DESTRUCTIVE:
-            # DESTRUCTIVE 需要 PLAN 权限（level >= 1）
-            if permission_level < 1:
-                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}）"
+            # DESTRUCTIVE 需要 AUTO 权限（level >= 3）— 最危险的操作需要最高权限
+            if permission_level < 3:
+                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 3）"
         return True, ""
 
     # === 属性方法 ===

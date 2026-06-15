@@ -16,6 +16,11 @@ import re
 from enum import Enum
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "IntentClassifier",
+    "IntentType",
+]
+
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
 

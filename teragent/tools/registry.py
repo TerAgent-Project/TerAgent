@@ -15,6 +15,10 @@
 """
 import logging
 
+__all__ = [
+    "ToolRegistry",
+]
+
 from teragent.core.types import ToolSafety
 from teragent.tools.base import BaseTool
 

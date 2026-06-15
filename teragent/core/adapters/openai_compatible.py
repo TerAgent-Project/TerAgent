@@ -205,6 +205,8 @@ class OpenAICompatibleAdapter(TAPAdapter):
         extra_headers: dict | None = None,
         enable_fake_tools: bool = False,
         multimodal_timeout: float = 600.0,
+        ssl_verify: bool | str = True,
+        http2_enabled: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -212,6 +214,8 @@ class OpenAICompatibleAdapter(TAPAdapter):
         self._extra_headers: dict[str, str] = extra_headers or {}
         self._enable_fake_tools = enable_fake_tools
         self._multimodal_timeout = multimodal_timeout
+        self._ssl_verify = ssl_verify
+        self._http2_enabled = http2_enabled
 
         # httpx timeout: short connect/write/pool, long read (streaming chunks)
         # 视频处理需要更长的超时时间
@@ -265,11 +269,12 @@ class OpenAICompatibleAdapter(TAPAdapter):
                         max_keepalive_connections=2,
                         keepalive_expiry=120.0,
                     ),
-                    http2=True,
+                    http2=self._http2_enabled,
+                    verify=self._ssl_verify,
                 )
                 logger.debug(
                     f"{self.__class__.__name__}: created new multimodal httpx connection pool "
-                    f"(timeout={self._multimodal_timeout}s, max_connections=5, http2=True)"
+                    f"(timeout={self._multimodal_timeout}s, max_connections=5, http2={self._http2_enabled})"
                 )
             return self._multimodal_http_client
 
@@ -281,11 +286,12 @@ class OpenAICompatibleAdapter(TAPAdapter):
                     max_keepalive_connections=5,
                     keepalive_expiry=60.0,
                 ),
-                http2=True,
+                http2=self._http2_enabled,
+                verify=self._ssl_verify,
             )
             logger.debug(
                 f"{self.__class__.__name__}: created new httpx connection pool "
-                f"(max_connections=10, max_keepalive=5, keepalive_expiry=60s, http2=True)"
+                f"(max_connections=10, max_keepalive=5, keepalive_expiry=60s, http2={self._http2_enabled})"
             )
         return self._http_client
 
@@ -461,6 +467,8 @@ class OpenAICompatibleAdapter(TAPAdapter):
         # DeepSeek V4: old names → new canonical names
         "deepseek-chat": "deepseek-v4-flash",
         "deepseek-reasoner": "deepseek-v4-flash",
+        # GLM-5.2 model name mappings
+        "glm_52": "glm-5.2",
     }
 
     def _resolve_model_name(self, model: str) -> str:
@@ -469,7 +477,14 @@ class OpenAICompatibleAdapter(TAPAdapter):
         Maps old DeepSeek model names to V4 equivalents:
           deepseek-chat → deepseek-v4-flash
           deepseek-reasoner → deepseek-v4-flash (with thinking mode)
+
+        Maps GLM-5.2 model name aliases:
+          glm_52 → glm-5.2
+          glm-5.2 → glm-5.2 (identity mapping, already canonical)
         """
+        # GLM-5.2 model name mappings
+        if model in ("glm-5.2", "glm_52"):
+            return "glm-5.2"
         return self._MODEL_NAME_MAP.get(model, model)
 
     # ----- Core send -----

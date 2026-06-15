@@ -15,11 +15,21 @@ request = TAPRequest(
     instruction="Implement user login module",  # Core instruction
     constraints=["Python 3.10+"],  # Hard constraints
     output_format_hint="<file path='...'>complete code</file>",  # Desired format
+    thinking_mode="high",               # Extended: thinking mode (auto/deep/quick/high/max)
+    multimodal_context=[...],           # Extended: list of MultimodalContent (images/video)
+    long_horizon=None,                  # Extended: LongHorizonConfig for long-running tasks
+    cache_preference=None,              # Extended: cache preference hints for cache-aware compilers
 )
 ```
 
 **Methods:**
 - `estimate_prompt_tokens() -> int` — Rough token count estimation
+
+**Extended Fields:**
+- `thinking_mode: Optional[Literal["deep", "quick", "auto"]] — Controls reasoning depth. Per-request override of driver-level default. Additional values `"high"`, `"max"` supported for GLM-5.2.
+- `multimodal_context: Optional[list[MultimodalContent]]` — List of multimodal content items (images, video) for models that support vision (M3, GLM-5.2 + 5V-Turbo). Each item has `type` (`"image_url"` or `"video_url"`) and corresponding URL/data.
+- `long_horizon: Optional[LongHorizonConfig]` — Configuration for long-horizon autonomous tasks (GLM-5/5.2). Includes `max_duration_hours`, `checkpoint_interval_minutes`, `evaluation_interval_steps`, etc.
+- `cache_preference: Optional[Literal["auto", "aggressive", "none"]] — Cache preference hint
 
 ### TAPResponse
 
@@ -31,6 +41,9 @@ response = TAPResponse(
     usage={"prompt_tokens": 100, "completion_tokens": 200},  # Token usage
     tool_calls=[...],  # Structured tool calls from API
     finish_reason="stop",  # Why the model stopped
+    cache_hit_tokens=3000,        # Extended: tokens served from cache (cache-aware models)
+    thinking_content="...",       # Extended: reasoning trace content (thinking mode models)
+    long_horizon_status=None,     # Extended: status info for long-horizon tasks
 )
 ```
 
@@ -38,6 +51,11 @@ response = TAPResponse(
 - `prompt_tokens -> int`
 - `completion_tokens -> int`
 - `total_tokens -> int`
+
+**Extended Fields:**
+- `cache_hit_tokens: int | None` — Number of tokens served from cache (DeepSeek V4 with `cache_aware=true`). Useful for cost tracking — cache hits are significantly cheaper.
+- `thinking_content: str | None` — The model's internal reasoning trace, available when thinking mode is active (DeepSeek V4 `deep` mode, GLM-5.2 `high`/`max` mode).
+- `long_horizon_status: dict | None` — Status information for long-horizon task steps, including checkpoint info, sub-goal progress, and strategy switch notifications.
 
 ### CompiledPrompt
 
@@ -63,6 +81,19 @@ prompt = CompiledPrompt(
 
 **Properties:**
 - `mode -> str` — Returns `"messages"`, `"system_user"`, or `"empty"`
+
+**`extra` dict field:**
+The `extra` dict carries compiler-specific parameters that adapters use to customize their behavior:
+
+| Key | Compiler | Adapter | Description |
+|-----|----------|---------|-------------|
+| `cache_aware` | `deepseek_v4` | `openai_compatible` | Whether to freeze tool definitions for cache hit optimization |
+| `variant` | `deepseek_v4` | `openai_compatible` | `"flash"` or `"pro"` — controls prompt strategy |
+| `minimax_video_mode` | `minimax_m3` | `minimax_native` | `"understand"` or `"summarize"` — video processing mode |
+| `minimax_frame_sampling` | `minimax_m3` | `minimax_native` | `"auto"`, `"uniform"`, `"keyframe"`, or `"dense"` |
+| `thinking_mode` | `glm_52` | `openai_compatible` | `"high"` or `"max"` — dual thinking mode |
+| `preserved_thinking` | `glm_52` | `openai_compatible` | Whether to inject preserved reasoning traces |
+| `vision_coordination` | `glm_52` | `openai_compatible` | Whether 5V-Turbo vision coordination is active |
 
 ### ModelProvider
 
@@ -96,6 +127,12 @@ provider = create_provider(
 - `has_fallback -> bool`
 - `cost_records -> list[TAPCostRecord]`
 - `capabilities -> dict`
+
+**Async context manager:** `ModelProvider` supports `async with` for automatic resource cleanup:
+```python
+async with create_provider(...) as provider:
+    response = await provider.execute_tap(request)
+```
 
 ### TAPCompiler (ABC)
 
@@ -1001,7 +1038,7 @@ from teragent.reliability.budget import MonthlyBudgetConfig
 config = MonthlyBudgetConfig(
     limit_cny=500.0,                     # Monthly budget cap (0 = no limit)
     warning_threshold=0.8,                # Warn at 80%
-    critical_threshold=1.0,               # Auto-downgrade at 100%
+    critical_threshold=0.95,              # Auto-downgrade at 95%
     auto_downgrade_driver="openai_compatible.deepseek_v4_flash",  # Fallback driver
     notify_on_warning=True,               # Emit events on warning
 )
@@ -1242,6 +1279,113 @@ info = MiniMaxRateLimitInfo()
 
 ---
 
+## GLM Adapter (`teragent.core.adapters.glm_native`)
+
+### GLMNativeAdapter
+
+```python
+from teragent.core.adapters.glm_native import GLMNativeAdapter
+
+adapter = GLMNativeAdapter(
+    base_url="https://open.bigmodel.cn/api/paas/v4",
+    api_key="your-api-key",
+    timeout=300.0,
+    multimodal_timeout=600.0,       # Longer timeout for 1M context requests
+)
+```
+
+**GLM-specific capabilities:**
+- Supports GLM-5 and GLM-5.2 model endpoints
+- Compatible with Zhipu AI's native message format
+- Handles High/Max thinking mode response parsing
+- Supports PreservedThinking trace injection
+
+**GLM-specific properties:**
+- `capabilities -> dict` — Includes `streaming: True`, `tool_calling: True`, `thinking_modes: ["high", "max"]`
+
+**Note:** GLM models can also be used via `openai_compatible` adapter with the appropriate compiler (`glm_5` or `glm_52`). The `glm_native` adapter provides Zhipu AI-specific optimizations.
+
+---
+
+## Compilers (`teragent.core.compilers`)
+
+### DeepSeekV4Compiler
+
+```python
+from teragent.core.compilers.deepseek_v4 import DeepSeekV4Compiler
+
+compiler = DeepSeekV4Compiler()
+# The variant (flash/pro) is set via the `variant` parameter in compile() or driver config
+```
+
+**Features:**
+- Cache-aware prompt layout (freezes system prompt and tool definitions at the beginning)
+- Thinking mode support (`auto`, `quick`, `deep`)
+- 1M context optimization
+- Flash/Pro variant switching via `variant` parameter (not separate compiler names)
+
+**Key `extra` dict keys:** `cache_aware`, `variant`
+
+### GLM5Compiler
+
+```python
+from teragent.core.compilers.glm_5 import GLM5Compiler
+
+compiler = GLM5Compiler()
+```
+
+**Features:**
+- Recency effect optimization (key instruction placed last)
+- Long-horizon task support with self-evaluation injection
+- 200K context optimization
+
+### GLM52Compiler
+
+```python
+from teragent.core.compilers.glm_52 import GLM52Compiler
+
+compiler = GLM52Compiler()
+```
+
+**Features:**
+- 1M context with context degradation support (1M → 200K)
+- Dual thinking modes: High (default) and Max
+- PreservedThinking: preserves reasoning traces across coding sessions
+- 5V-Turbo vision coordination: enables vision→code→verify cycles with GLM-5V-Turbo
+
+**Key `extra` dict keys:** `thinking_mode`, `preserved_thinking`, `vision_coordination`
+
+### GLM5VTurboCompiler
+
+```python
+from teragent.core.compilers.glm_5v_turbo import GLM5VTurboCompiler
+
+compiler = GLM5VTurboCompiler()
+```
+
+**Features:**
+- Vision analysis compilation for GLM-5V-Turbo model
+- Converts multimodal content into GLM-5V-Turbo's expected format
+- Used in coordination with GLM52Compiler for vision→code→verify cycles
+
+### MiniMaxM3Compiler
+
+```python
+from teragent.core.compilers.minimax_m3 import MiniMaxM3Compiler
+
+compiler = MiniMaxM3Compiler()
+```
+
+**Features:**
+- MSA full-text injection mode (1/20 compute cost at 1M context)
+- Multimodal content encoding (image_url, video_url content blocks)
+- Desktop context conversion (DesktopContext → M3 desktop operation instructions)
+- Video processing hints (automatically added when using MiniMaxNativeAdapter)
+
+**Key `extra` dict keys:** `minimax_video_mode`, `minimax_frame_sampling`
+
+---
+
 ## Desktop Tool (`teragent.tools.desktop`)
 
 ### DesktopTool
@@ -1329,3 +1473,18 @@ args, kwargs = await bus.wait_for("agent_done", timeout=30)
 names = bus.get_event_names()
 history = bus.get_event_history(limit=50)
 ```
+
+---
+
+### Rate Limiting — `teragent.core.rate_limiter`
+
+| Class / Function | Description |
+|-----------------|-------------|
+| `TokenBucketRateLimiter` | Token bucket rate limiter with `acquire()` and `wait_and_acquire()` |
+| `SlidingWindowRateLimiter` | Sliding window rate limiter with timestamp tracking |
+| `AdaptiveRateLimiter` | Adaptive rate limiter that learns from `X-RateLimit-*` headers; auto-backs off on 429 |
+| `RateLimitConfig` | Configuration dataclass (strategy, max_tokens, refill_rate, window, safety_factor) |
+| `RateLimitStrategy` | Enum: `TOKEN_BUCKET`, `SLIDING_WINDOW`, `ADAPTIVE` |
+| `RateLimitStatus` | Current status with `is_limited` and `wait_seconds` properties |
+| `RateLimiter` | Type alias: `TokenBucketRateLimiter \| SlidingWindowRateLimiter \| AdaptiveRateLimiter` |
+| `create_rate_limiter(config=None)` | Factory function — returns appropriate limiter based on config |

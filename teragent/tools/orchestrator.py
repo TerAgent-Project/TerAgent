@@ -21,6 +21,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
+__all__ = [
+    "MAX_CONCURRENT_TOOLS",
+    "ToolOrchestrator",
+]
+
 from teragent.core.types import ToolSafety
 from teragent.hooks.manager import HookContext, HookDecision, HookEvent, HookManager
 from teragent.tools.base import ToolResult

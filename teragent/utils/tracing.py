@@ -13,6 +13,18 @@ import uuid
 import warnings
 from dataclasses import dataclass, field
 
+__all__ = [
+    "Span",
+    "end_span",
+    "experimental",
+    "get_all_spans",
+    "get_request_id",
+    "get_span_summary",
+    "reset_request_id",
+    "set_request_id",
+    "start_span",
+]
+
 logger = logging.getLogger(__name__)
 
 

@@ -24,6 +24,10 @@ import logging
 import time
 from typing import Any
 
+__all__ = [
+    "AgentLoop",
+]
+
 from teragent.config.agent_loop_config import AgentLoopConfig
 from teragent.context.auto_compact import AutoCompactor
 from teragent.context.context_window import ContextWindow
@@ -154,6 +158,8 @@ class AgentLoop:
 
         # --- Streaming tool results buffer ---
         # Populated by _call_model_streaming(), consumed by _tool_loop()
+        # 修复 H9: 添加文档说明 — 此列表非线程安全，不应并发调用 run()
+        # 若需并发，需改为 per-invocation 的局部变量（需较大重构）
         self._streaming_tool_results: list[tuple[dict, ToolResult]] = []
 
     # ==================================================================
@@ -360,7 +366,8 @@ class AgentLoop:
                         intent=intent.value if intent else "unknown",
                     )
                 # Restore from existing session if messages are empty
-                if not messages or len(messages) <= 1:
+                # 修复 H7: 放宽条件 — 在 system prompt 添加之前 messages 较短时也应恢复
+                if len(messages) <= 2:
                     existing = self._session_persistence.restore(session_id)
                     if existing and len(existing) > 1:
                         # Keep the newly appended user message, prepend restored
@@ -454,7 +461,7 @@ class AgentLoop:
 
             # Also check against config max_tool_steps
             self._total_steps += 1
-            if self._total_steps > max_steps:
+            if self._total_steps >= max_steps:
                 messages.append(
                     Message.system_warning(
                         f"Maximum tool steps reached ({max_steps})."
@@ -512,22 +519,29 @@ class AgentLoop:
             self._total_model_calls += 1
 
             # Record circuit breaker progress
-            if self._circuit_breaker:
+            # Only record to circuit breaker if we have actual token data
+            if self._circuit_breaker and usage:
                 prompt_tokens = usage.get("prompt_tokens", 0)
                 completion_tokens = usage.get("completion_tokens", 0)
-                self._circuit_breaker.record_model_call(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    stage="agentloop",
-                    latency_ms=0,
-                )
+                if prompt_tokens > 0 or completion_tokens > 0:  # skip zero-token records
+                    self._circuit_breaker.record_model_call(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        stage="agentloop",
+                        latency_ms=0,
+                    )
                 if finish_reason != "error":
                     self._circuit_breaker.record_success()
+            elif self._circuit_breaker and finish_reason != "error":
+                self._circuit_breaker.record_success()
 
             # 7. Handle output truncation recovery
             if finish_reason == "length" and self._recovery_manager:
-                # Append partial assistant message
-                messages.append(Message.assistant_text(content))
+                # Append partial assistant message — 保留 tool_calls 避免上下文丢失
+                if tool_calls:
+                    messages.append(Message.assistant_tool_call(content, tool_calls))
+                else:
+                    messages.append(Message.assistant_text(content))
 
                 if self._recovery_manager.should_continue_after_truncation(
                     finish_reason, truncation_attempt
@@ -664,9 +678,12 @@ class AgentLoop:
         Returns the model response dict with content, tool_calls,
         usage, finish_reason.
         """
+        # Build the messages for the chat API
+        # NOTE: chat_messages 在 try 块之前定义，确保 fallback 路径中可访问
+        chat_messages = list(messages)
+
+        used_chat_with_fallback = self._model.has_fallback
         try:
-            # Build the messages for the chat API
-            chat_messages = list(messages)
 
             # Use chat_with_fallback when available (handles provider
             # failover internally), otherwise fall back to plain chat().
@@ -705,8 +722,9 @@ class AgentLoop:
                     self._recovery_manager.record_recovery(RecoveryType.FALLBACK)
 
         # Only attempt manual fallback if we didn't already use chat_with_fallback
-        # (chat_with_fallback already tries the fallback provider internally)
-        if not self._model.has_fallback and self._model.fallback_provider:
+        # (chat_with_fallback already tries the fallback provider internally).
+        # For the plain chat() path, try fallback_provider if available.
+        if not used_chat_with_fallback and self._model.fallback_provider is not None:
             try:
                 fallback_response = await self._model.fallback_provider.chat(
                     chat_messages, tools=tools
@@ -724,11 +742,13 @@ class AgentLoop:
             except Exception as fallback_err:
                 logger.error(f"Fallback model also failed: {fallback_err}")
 
-        # Return an error response
+        # Return an error response — usage is None (not {}) to signal no
+        # token data was returned, so the circuit-breaker recording path
+        # skips zero-token entries cleanly.
         return {
             "content": f"Model call failed: {last_error}",
             "tool_calls": [],
-            "usage": {},
+            "usage": None,
             "finish_reason": "error",
         }
 
@@ -889,12 +909,21 @@ class AgentLoop:
             # No intent tools configured → allow all tools
             return all_tool_names
 
-        # Check if intent is in config (including mapping to empty list)
+        # Normalize: try enum key first, then string key
+        allowed = None
         if intent in intent_tools:
             allowed = list(intent_tools[intent])
         elif intent.value in intent_tools:
             allowed = list(intent_tools[intent.value])
         else:
+            # Try converting all keys to their string values for comparison
+            for key, val in intent_tools.items():
+                key_str = key.value if isinstance(key, IntentType) else str(key)
+                if key_str == intent.value:
+                    allowed = list(val)
+                    break
+
+        if allowed is None:
             # intent not in config → allow all tools as safe default
             allowed = list(all_tool_names)
 
@@ -1024,7 +1053,7 @@ class AgentLoop:
 
         if result.success:
             parts.append("Success.")
-            if result.data:
+            if result.data is not None:
                 if isinstance(result.data, dict):
                     try:
                         parts.append(json.dumps(result.data, ensure_ascii=False))
@@ -1243,6 +1272,8 @@ class AgentLoop:
         self._total_steps = 0
         self._total_model_calls = 0
         self._streaming_tool_results = []
+        # 修复 H8: 重置流式相关配置
+        self._streaming_mode = "auto"
         self._recovery_stats = {
             "streaming_mode": self._streaming_mode,
             "streaming_retries": 0,

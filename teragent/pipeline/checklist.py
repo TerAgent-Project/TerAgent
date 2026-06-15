@@ -17,6 +17,16 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+__all__ = [
+    "TaskInfo",
+    "check_code_quality",
+    "check_fallback_files",
+    "check_file_conflicts",
+    "check_requirements",
+    "check_runnable",
+    "run_deterministic_checks",
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,7 +163,7 @@ def check_runnable(workspace_root: str) -> list[str]:
 
     try:
         result = subprocess.run(
-            [sys.executable, 'main.py'],
+            [sys.executable, main_path],
             cwd=workspace_root,
             capture_output=True,
             text=True,

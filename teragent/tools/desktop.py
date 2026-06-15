@@ -22,9 +22,17 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
+
+__all__ = [
+    "DesktopSafetyConfig",
+    "DesktopTool",
+    "register_desktop_tool",
+]
 
 from teragent.core.tap import DesktopContext, MultimodalContent
 from teragent.core.types import ToolSafety
@@ -192,9 +200,14 @@ class DesktopTool(BaseTool):
         """
         action = params.get("action", "")
 
+        if progress_callback:
+            await progress_callback(f"Starting desktop action: {action}", 0.0)
+
         # 安全预检查
         safety_error = self._pre_safety_check(params)
         if safety_error:
+            if progress_callback:
+                await progress_callback(f"Safety check failed: {action}", 1.0)
             return ToolResult(
                 success=False,
                 error=safety_error,
@@ -214,20 +227,29 @@ class DesktopTool(BaseTool):
 
         handler = action_map.get(action)
         if not handler:
+            if progress_callback:
+                await progress_callback(f"Unknown action: {action}", 1.0)
             return ToolResult(
                 success=False,
                 error=f"未知的桌面操作类型: {action!r}，支持的操作: {list(action_map.keys())}",
                 safety=self._safety,
             )
 
+        if progress_callback:
+            await progress_callback(f"Executing: {action}", 0.5)
+
         try:
             result = await handler(params)
             # 操作成功时更新频率限制状态
             if result.success:
                 self._update_op_state()
+            if progress_callback:
+                await progress_callback(f"Completed: {action}", 1.0)
             return result
         except Exception as e:
             logger.error(f"DesktopTool: 操作 {action} 执行失败: {e}", exc_info=True)
+            if progress_callback:
+                await progress_callback(f"Failed: {action}", 1.0)
             return ToolResult(
                 success=False,
                 error=f"桌面操作 {action} 执行失败: {e}",
@@ -405,6 +427,8 @@ class DesktopTool(BaseTool):
     def _check_screen_bounds(self, x: int, y: int) -> str:
         """检查坐标是否在屏幕范围内
 
+        当屏幕尺寸为 (0, 0) 时（无法检测），跳过边界检查。
+
         Args:
             x: X 坐标
             y: Y 坐标
@@ -413,6 +437,9 @@ class DesktopTool(BaseTool):
             错误消息，空字符串表示在范围内
         """
         screen_w, screen_h = self._get_screen_size()
+        # 屏幕尺寸未知，跳过边界检查
+        if screen_w == 0 and screen_h == 0:
+            return ""
         if x < 0 or y < 0 or x >= screen_w or y >= screen_h:
             return (
                 f"坐标 ({x}, {y}) 超出屏幕范围 "
@@ -452,8 +479,14 @@ class DesktopTool(BaseTool):
     def _get_screen_size(self) -> tuple[int, int]:
         """获取屏幕尺寸
 
+        跨平台策略:
+          - 优先使用 pyautogui.size()
+          - Windows 回退: ctypes.windll.user32.GetSystemMetrics
+          - macOS 回退: AppKit.NSScreen
+          - 最终回退: (0, 0) 表示未知，禁用坐标检查
+
         Returns:
-            (width, height) 元组
+            (width, height) 元组，(0, 0) 表示无法检测
         """
         if _HAS_PYAUTOGUI and pyautogui is not None:
             try:
@@ -461,8 +494,27 @@ class DesktopTool(BaseTool):
                 return size.width, size.height
             except Exception:
                 pass
-        # 默认返回 1920x1080
-        return 1920, 1080
+
+        # 平台特定回退
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                user32 = ctypes.windll.user32
+                width = user32.GetSystemMetrics(0)
+                height = user32.GetSystemMetrics(1)
+                if width > 0 and height > 0:
+                    return width, height
+            elif sys.platform == "darwin":
+                from AppKit import NSScreen  # type: ignore[import-untyped]
+                screen = NSScreen.mainScreen()
+                frame = screen.frame()
+                return int(frame.size.width), int(frame.size.height)
+        except Exception:
+            pass
+
+        # 无法检测 — 返回 (0, 0) 表示未知
+        logger.warning("DesktopTool: 无法检测屏幕尺寸，坐标边界检查将跳过")
+        return 0, 0
 
     # ===== 操作实现 =====
 
@@ -479,7 +531,31 @@ class DesktopTool(BaseTool):
         if img_format == "JPG":
             img_format = "JPEG"
 
-        if _HAS_PIL and ImageGrab is not None:
+        # Linux 优先使用 mss (ImageGrab 需要 Xlib)
+        if sys.platform.startswith("linux") and _HAS_MSS and mss is not None:
+            try:
+                with mss.mss() as sct:
+                    monitor = sct.monitors[0] if sct.monitors else None
+                    if monitor:
+                        screenshot = sct.grab(monitor)
+                        from PIL import Image as PILImage
+                        img = PILImage.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+                        buf = io.BytesIO()
+                        save_kwargs = {"format": img_format}
+                        if img_format == "JPEG":
+                            save_kwargs["quality"] = self._safety_config.screenshot_quality
+                        img.save(buf, **save_kwargs)
+                        img_data = buf.getvalue()
+                        logger.debug(
+                            f"DesktopTool: mss 截图成功 (Linux优先)，"
+                            f"尺寸={img.size}，格式={img_format}，"
+                            f"大小={len(img_data)} bytes"
+                        )
+            except Exception as e:
+                logger.warning(f"DesktopTool: mss 截图失败: {e}，尝试 Pillow")
+
+        # 非 Linux 或 mss 失败，尝试 Pillow ImageGrab
+        if img_data is None and _HAS_PIL and ImageGrab is not None:
             try:
                 img = ImageGrab.grab()
                 buf = io.BytesIO()
@@ -494,22 +570,17 @@ class DesktopTool(BaseTool):
                     f"大小={len(img_data)} bytes"
                 )
             except Exception as e:
-                logger.warning(f"DesktopTool: Pillow 截图失败: {e}，尝试 mss")
+                logger.warning(f"DesktopTool: Pillow 截图失败: {e}")
 
-        # Pillow 失败，尝试 mss
-        if img_data is None and _HAS_MSS and mss is not None:
+        # Pillow 也失败 (非 Linux)，尝试 mss
+        if img_data is None and not sys.platform.startswith("linux") and _HAS_MSS and mss is not None:
             try:
                 with mss.mss() as sct:
                     monitor = sct.monitors[0] if sct.monitors else None
                     if monitor:
                         screenshot = sct.grab(monitor)
-                        # mss 返回的截图需要转换为 PIL Image 再保存
                         from PIL import Image as PILImage
-                        img = PILImage.frombytes(
-                            "RGB",
-                            screenshot.size,
-                            screenshot.bgra,
-                        )
+                        img = PILImage.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
                         buf = io.BytesIO()
                         save_kwargs = {"format": img_format}
                         if img_format == "JPEG":
@@ -644,33 +715,37 @@ class DesktopTool(BaseTool):
         """通过剪贴板输入 Unicode 文本（中文等）
 
         使用系统剪贴板临时存储文本，然后粘贴输入。
+        尝试保存并恢复原始剪贴板内容。
 
         Args:
             text: 要输入的文本
         """
         import subprocess
 
-        # 保存剪贴板内容（尽量恢复）
-        _saved_clipboard = ""
-        try:
-            _saved_clipboard = pyautogui.hotkey  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        # 保存剪贴板内容
+        saved_clipboard = self._read_clipboard()
 
         try:
             # 将文本复制到剪贴板
-            # macOS
-            import sys
             if sys.platform == "darwin":
                 process = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
                 process.communicate(text.encode("utf-8"))
-            # Linux (需要 xclip)
+            # Linux (检测 X11/Wayland)
             elif sys.platform.startswith("linux"):
-                process = subprocess.Popen(
-                    ["xclip", "-selection", "clipboard"],
-                    stdin=subprocess.PIPE,
-                )
-                process.communicate(text.encode("utf-8"))
+                session_type = os.getenv("XDG_SESSION_TYPE", "")
+                wayland_display = os.getenv("WAYLAND_DISPLAY", "")
+                if session_type == "wayland" or wayland_display:
+                    process = subprocess.Popen(
+                        ["wl-copy"],
+                        stdin=subprocess.PIPE,
+                    )
+                    process.communicate(text.encode("utf-8"))
+                else:
+                    process = subprocess.Popen(
+                        ["xclip", "-selection", "clipboard"],
+                        stdin=subprocess.PIPE,
+                    )
+                    process.communicate(text.encode("utf-8"))
             # Windows
             elif sys.platform == "win32":
                 process = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
@@ -687,11 +762,75 @@ class DesktopTool(BaseTool):
                 pyautogui.hotkey("ctrl", "v")
         except Exception as e:
             logger.warning(f"DesktopTool: Unicode 输入失败: {e}，尝试直接输入")
-            # 最终回退：直接 write（可能丢失 Unicode 字符）
             try:
                 pyautogui.write(text)
             except Exception:
                 logger.error("DesktopTool: 所有文本输入方式均失败")
+        finally:
+            # 恢复剪贴板内容
+            if saved_clipboard:
+                self._write_clipboard(saved_clipboard)
+
+    def _read_clipboard(self) -> str:
+        """读取当前剪贴板内容（跨平台）
+
+        Returns:
+            剪贴板文本内容，失败返回空字符串
+        """
+        import subprocess
+        try:
+            if sys.platform == "darwin":
+                result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=2)
+                return result.stdout
+            elif sys.platform.startswith("linux"):
+                session_type = os.getenv("XDG_SESSION_TYPE", "")
+                wayland_display = os.getenv("WAYLAND_DISPLAY", "")
+                if session_type == "wayland" or wayland_display:
+                    result = subprocess.run(["wl-paste"], capture_output=True, text=True, timeout=2)
+                else:
+                    result = subprocess.run(
+                        ["xclip", "-selection", "clipboard", "-o"],
+                        capture_output=True, text=True, timeout=2,
+                    )
+                return result.stdout
+            elif sys.platform == "win32":
+                try:
+                    import pyperclip  # type: ignore[import-untyped]
+                    return pyperclip.paste()
+                except ImportError:
+                    return ""
+        except Exception:
+            pass
+        return ""
+
+    def _write_clipboard(self, text: str) -> None:
+        """写入剪贴板内容（跨平台）
+
+        Args:
+            text: 要写入的文本
+        """
+        import subprocess
+        try:
+            if sys.platform == "darwin":
+                process = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+                process.communicate(text.encode("utf-8"))
+            elif sys.platform.startswith("linux"):
+                session_type = os.getenv("XDG_SESSION_TYPE", "")
+                wayland_display = os.getenv("WAYLAND_DISPLAY", "")
+                if session_type == "wayland" or wayland_display:
+                    process = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+                    process.communicate(text.encode("utf-8"))
+                else:
+                    process = subprocess.Popen(
+                        ["xclip", "-selection", "clipboard"],
+                        stdin=subprocess.PIPE,
+                    )
+                    process.communicate(text.encode("utf-8"))
+            elif sys.platform == "win32":
+                process = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
+                process.communicate(text.encode("utf-8"))
+        except Exception as e:
+            logger.debug(f"DesktopTool: 写入剪贴板失败: {e}")
 
     async def _action_scroll(self, params: dict) -> ToolResult:
         """滚动屏幕
@@ -716,9 +855,20 @@ class DesktopTool(BaseTool):
             elif direction == "down":
                 pyautogui.scroll(-scroll_amount)
             elif direction == "left":
-                pyautogui.hscroll(-scroll_amount)
+                try:
+                    pyautogui.hscroll(-scroll_amount)
+                except (NotImplementedError, AttributeError):
+                    # hscroll 不可用，回退到 Shift+垂直滚动
+                    pyautogui.keyDown('shift')
+                    pyautogui.scroll(-scroll_amount)
+                    pyautogui.keyUp('shift')
             elif direction == "right":
-                pyautogui.hscroll(scroll_amount)
+                try:
+                    pyautogui.hscroll(scroll_amount)
+                except (NotImplementedError, AttributeError):
+                    pyautogui.keyDown('shift')
+                    pyautogui.scroll(scroll_amount)
+                    pyautogui.keyUp('shift')
             else:
                 return ToolResult(
                     success=False,
@@ -957,6 +1107,18 @@ class DesktopTool(BaseTool):
                     active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
                     return active_app.localizedName() if active_app else ""
                 except ImportError:
+                    pass
+            elif sys.platform.startswith("linux"):
+                # Linux: 使用 xdotool 获取活动窗口标题
+                try:
+                    import subprocess as _sp
+                    result = _sp.run(
+                        ["xdotool", "getwindowfocus", "getwindowname"],
+                        capture_output=True, text=True, timeout=2,
+                    )
+                    if result.returncode == 0:
+                        return result.stdout.strip()
+                except (FileNotFoundError, _sp.TimeoutExpired, OSError):
                     pass
         except Exception as e:
             logger.debug(f"DesktopTool: 获取活动窗口失败: {e}")

@@ -2,7 +2,7 @@
 # 版本：v1.0 | 用于本地推理部署
 #
 # 使用方式：
-#   1. 复制本文件为 agent.toml：cp agent.local.toml agent.toml
+#   1. 复制本文件到项目根目录为 agent.toml：cp examples/agent.local.toml agent.toml
 #   2. 修改 base_url 为实际推理服务地址
 #   3. 启动推理服务后运行 TerAgent
 #

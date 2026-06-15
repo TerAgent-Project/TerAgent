@@ -21,6 +21,10 @@ import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+__all__ = [
+    "EventBus",
+]
+
 if TYPE_CHECKING:
     from teragent.core.types import Message
 
@@ -49,6 +53,9 @@ class EventBus:
         self._event_data_history: list[dict] = []
         self._max_event_data_history: int = 200
 
+        # M11: Track fire-and-forget tasks to prevent GC in Python 3.11+
+        self._pending_tasks: set[asyncio.Task] = set()
+
     def on(self, event_name: str, handler: Callable) -> None:
         """注册事件处理器"""
         self._subscribers[event_name].append(handler)
@@ -67,7 +74,7 @@ class EventBus:
         timestamp = time.time()
         self._event_history.append((event_name, timestamp))
         if len(self._event_history) > 100:
-            self._event_history = self._event_history[-100:]
+            del self._event_history[:len(self._event_history) - 100]
 
         # Phase 7.3: 存储事件数据
         self._store_event_data(event_name, timestamp, args, kwargs)
@@ -75,7 +82,8 @@ class EventBus:
         for handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(self._safe_invoke_async(handler, *args, **kwargs))
+                    task = asyncio.create_task(self._safe_invoke_async(handler, *args, **kwargs))
+                    self._track_task(task)
                 else:
                     loop = asyncio.get_running_loop()
                     # run_in_executor only accepts *args, not **kwargs;
@@ -106,7 +114,7 @@ class EventBus:
         timestamp = time.time()
         self._event_history.append((event_name, timestamp))
         if len(self._event_history) > 100:
-            self._event_history = self._event_history[-100:]
+            del self._event_history[:len(self._event_history) - 100]
 
         # 存储事件数据
         self._store_event_data(event_name, timestamp, args, kwargs)
@@ -150,7 +158,7 @@ class EventBus:
         timestamp = time.time()
         self._event_history.append((event_name, timestamp))
         if len(self._event_history) > 100:
-            self._event_history = self._event_history[-100:]
+            del self._event_history[:len(self._event_history) - 100]
 
         # 存储消息事件的增强数据
         self._store_event_data(
@@ -172,9 +180,10 @@ class EventBus:
         for handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         self._safe_invoke_async(handler, message)
                     )
+                    self._track_task(task)
                 else:
                     loop = asyncio.get_running_loop()
                     future = loop.run_in_executor(None, handler, message)
@@ -219,7 +228,12 @@ class EventBus:
 
         self._event_data_history.append(event_data)
         if len(self._event_data_history) > self._max_event_data_history:
-            self._event_data_history = self._event_data_history[-self._max_event_data_history:]
+            del self._event_data_history[:len(self._event_data_history) - self._max_event_data_history]
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        """Track a fire-and-forget task to prevent GC (Python 3.11+)."""
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     async def _safe_invoke_async(self, handler: Callable, *args: Any, **kwargs: Any) -> None:
         """安全调用异步 handler"""

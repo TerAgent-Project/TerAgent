@@ -4,6 +4,10 @@ from collections import deque
 
 import networkx as nx
 
+__all__ = [
+    "ReferenceGraph",
+]
+
 logger = logging.getLogger(__name__)
 
 

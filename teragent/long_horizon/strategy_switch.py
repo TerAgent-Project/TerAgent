@@ -37,6 +37,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+__all__ = [
+    "StrategySwitchRecord",
+    "StrategySwitcher",
+]
+
 if TYPE_CHECKING:
     from teragent.core.provider import ModelProvider
     from teragent.long_horizon.progress import ProgressReport

@@ -19,6 +19,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+__all__ = [
+    "Message",
+    "MessageRole",
+    "MessageType",
+    "ToolSafety",
+    "messages_from_dicts",
+    "messages_to_api_format",
+]
+
 
 class ToolSafety(Enum):
     """工具安全级别
@@ -156,9 +165,12 @@ class Message:
         _DICT_COMPAT = {
             "role": self.role.value,
             "content": self.content,
+            "message_type": self.message_type.value if self.message_type else None,
             "tool_calls": self.tool_calls if self.tool_calls else None,
             "tool_call_id": self.tool_call_id if self.tool_call_id else None,
             "tool_name": self.tool_name if self.tool_name else None,
+            "metadata": self.metadata if self.metadata else None,
+            "timestamp": self.timestamp if self.timestamp else None,
         }
         return _DICT_COMPAT.get(key, default)
 
@@ -343,7 +355,7 @@ class Message:
           - system + [WARN] / [WARNING]（大小写不敏感） -> SYSTEM_WARNING
           - system + [RECOVERY] -> SYSTEM_WARNING
           - system + [CHART] -> SYSTEM_REMINDER
-          - system 其他 -> SYSTEM_REMINDER
+          - system 其他 -> SYSTEM_PROMPT
         """
         content = data.get("content") or ""
 

@@ -198,7 +198,7 @@ async def demo_cost_tracking() -> None:
     tracker.set_monthly_budget(MonthlyBudgetConfig(
         limit_cny=100.0,
         warning_threshold=0.8,
-        critical_threshold=1.0,
+        critical_threshold=0.95,
     ))
 
     # Record costs for different models
@@ -353,14 +353,97 @@ async def demo_multimodal_agent_flow() -> None:
     print(f"  Step 4 (Review):    {decision4.selected_driver} (reason: {decision4.reason.value})")
 
 
+async def demo_5v_turbo_coordination() -> None:
+    """Demo 7: GLM-5V-Turbo + GLM-5.2 coordinated workflow"""
+    print("\n" + "=" * 70)
+    print("Demo 7: GLM-5V-Turbo + GLM-5.2 Vision→Code Coordination")
+    print("=" * 70)
+
+    from teragent.coordination.glm5v_coordinator import (
+        GLM52VCoordinatedWorkflow,
+        CoordinationConfig,
+        CoordinationMode,
+    )
+    from teragent.core.adapters.mock import MockAdapter
+    from teragent.core.compiler import TAPCompilerRegistry
+    from teragent.core.provider import ModelProvider
+
+    # Create vision and coding providers
+    vision_compiler_cls = TAPCompilerRegistry.get("glm_5v_turbo")
+    coding_compiler_cls = TAPCompilerRegistry.get("glm_52")
+
+    if vision_compiler_cls and coding_compiler_cls:
+        vision_provider = ModelProvider(
+            compiler=vision_compiler_cls(mode="analysis"),
+            adapter=MockAdapter(),
+            model="glm-5v-turbo",
+        )
+        coding_provider = ModelProvider(
+            compiler=coding_compiler_cls(),
+            adapter=MockAdapter(),
+            model="glm-5.2",
+        )
+
+        # Sequential mode: Vision → Code
+        config_seq = CoordinationConfig(
+            mode="sequential",
+            context_sharing=True,
+            inject_code_generation_hint=True,
+        )
+        workflow = GLM52VCoordinatedWorkflow(
+            vision_provider=vision_provider,
+            coding_provider=coding_provider,
+            config=config_seq,
+        )
+
+        request = TAPRequest(
+            meta={"task_id": "coord-1", "intent": "execute"},
+            instruction="Implement this design as a React component",
+            multimodal_context=[
+                MultimodalContent(type="image_url", url="https://example.com/design-mock.png")
+            ],
+            constraints=["React 18+", "TypeScript"],
+        )
+
+        result = await workflow.execute(request)
+        print(f"\n  [Sequential] Phase: {result.phase}")
+        print(f"  [Sequential] Success: {result.success}")
+        print(f"  [Sequential] Steps: {len(result.steps)}")
+        if result.vision_analysis:
+            print(f"  [Sequential] Vision analysis confidence: {result.vision_analysis.confidence:.2f}")
+        if result.final_response:
+            print(f"  [Sequential] Code output preview: {result.final_response.raw_text[:80]}...")
+
+        # Verify mode: Vision → Code → Verify
+        config_verify = CoordinationConfig(
+            mode="verify",
+            max_verification_rounds=1,
+            verification_score_threshold=7.0,
+        )
+        workflow_verify = GLM52VCoordinatedWorkflow(
+            vision_provider=vision_provider,
+            coding_provider=coding_provider,
+            config=config_verify,
+        )
+
+        result_verify = await workflow_verify.execute(request)
+        print(f"\n  [Verify] Phase: {result_verify.phase}")
+        print(f"  [Verify] Steps: {len(result_verify.steps)}")
+        if result_verify.verification_result:
+            print(f"  [Verify] Verification done: True")
+    else:
+        print("  (Skipping: GLM-5V-Turbo or GLM-5.2 compiler not available)")
+
+
 async def main() -> None:
     """Run all Phase 3 multi-model collaboration demos"""
     print("=" * 70)
     print("TerAgent Phase 3: Multi-Model Collaboration Demo")
-    print("  - ModelRouter: Intelligent model selection")
+    print("  - ModelRouter: Intelligent model selection (now with GLM-5.2)")
     print("  - PipelineManager: Dynamic pipeline switching")
     print("  - CrossModelCostTracker: Cost tracking & budget control")
     print("  - Degradation: Automatic fallback on failure")
+    print("  - GLM-5V-Turbo + GLM-5.2: Vision→Code coordination")
     print("=" * 70)
 
     await demo_multi_model_compilation()
@@ -369,6 +452,7 @@ async def main() -> None:
     await demo_cost_tracking()
     await demo_degradation()
     await demo_multimodal_agent_flow()
+    await demo_5v_turbo_coordination()
 
     print("\n" + "=" * 70)
     print("All demos completed!")

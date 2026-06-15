@@ -55,6 +55,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+__all__ = [
+    "DPOPair",
+    "DataConstitution",
+    "TAPTracer",
+    "TraceRecord",
+    "TraceStats",
+]
+
 from teragent.core.tap import TAPRequest, TAPResponse
 
 logger = logging.getLogger(__name__)
@@ -563,13 +571,17 @@ class TAPTracer:
             responses = type_records.get("tap_response", [])
             checklists = type_records.get("checklist_result", [])
 
-            if not requests and not responses:
+            if not requests and not responses and not checklists:
                 continue
 
             # Get the latest records for each type
             latest_request = requests[-1] if requests else None
             latest_response = responses[-1] if responses else None
             latest_checklist = checklists[-1] if checklists else None
+
+            # 修复 H6: 确保至少有一个非 None 记录
+            if not (latest_request or latest_response or latest_checklist):
+                continue
 
             # Determine PASS/FAIL
             passed = False

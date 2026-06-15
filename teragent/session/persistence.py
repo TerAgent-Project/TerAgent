@@ -56,6 +56,12 @@ import threading
 import time
 from dataclasses import dataclass
 
+__all__ = [
+    "SessionData",
+    "SessionInfo",
+    "SessionPersistence",
+]
+
 from teragent.core.types import Message, MessageRole, MessageType
 
 logger = logging.getLogger(__name__)

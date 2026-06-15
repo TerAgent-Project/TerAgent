@@ -137,6 +137,31 @@ Splits commands on `|`, `&&`, `||`, `;` and checks each sub-command independentl
 | Remote execution | `curl \| sh`, `eval`, `source /tmp/...` |
 | Fork bomb / disk write | `:(){ :\|:& };:`, `> /dev/sd` |
 
+#### Windows-Specific Dangerous Patterns (16 patterns)
+
+On Windows (`sys.platform == "win32"`), an additional 16 dangerous command patterns are checked:
+
+| Pattern | Example | Category |
+|---------|---------|----------|
+| `format X:` | `format C:` | Disk destruction |
+| `del /s`, `rd /s` | `del /s /q C:\` | Recursive deletion |
+| `reg delete/add` | `reg delete HKLM\...` | Registry modification |
+| `net user` | `net user hacker P@ss /add` | User management |
+| `net localgroup` | `net localgroup admins hacker /add` | Group management |
+| `powershell -enc` | `powershell -encodedcommand <base64>` | Encoded execution bypass |
+| `pwsh -enc` | `pwsh -encodedcommand <base64>` | Encoded execution bypass |
+| `diskpart` | `diskpart` | Disk partition operations |
+| `cipher /w:` | `cipher /w:C:\` | Secure data erasure |
+| `taskkill` | `taskkill /f /im *` | Process termination |
+| `netsh` | `netsh advfirewall` | Network/firewall configuration |
+| `takeown` | `takeown /f C:\Windows` | Ownership takeover |
+| `icacls /grant` | `icacls C:\ /grant user:F` | Permission modification |
+| `wmic` | `wmic process call create` | WMI command execution |
+| `schtasks /create` | `schtasks /create /tn ...` | Scheduled task creation |
+| `schtasks /delete` | `schtasks /delete /tn ...` | Scheduled task deletion |
+
+These patterns are automatically enabled on Windows platforms and supplement the Unix-focused blacklist.
+
 ### Layer 4: Dangerous Redirect Detection
 
 Fine-grained detection of redirects to system-critical paths, checked per sub-command:
@@ -144,6 +169,20 @@ Fine-grained detection of redirects to system-critical paths, checked per sub-co
 - `> /etc/passwd` — redirect to system configuration
 - `> /dev/sda` — direct disk write
 - Any redirect to `/etc`, `/dev`, `/sys`, `/proc`, `/boot`, `/root`, `/sbin`
+
+On Windows, the following system paths are also protected:
+
+| Path | Description |
+|------|-------------|
+| `%SystemRoot%\` (e.g., `C:\Windows\`) | Windows system directory |
+| `%SystemRoot%\System32\` | System binaries and configs |
+| `%SystemRoot%\SysWOW64\` | 64-bit system directory |
+| `C:\Program Files\` | Installed applications |
+| `C:\Program Files (x86)\` | 32-bit applications |
+| `C:\ProgramData\` | Global application data |
+| `C:\System Volume Information\` | System restore points |
+
+These paths are resolved from environment variables (`SystemRoot`, `ProgramData`) and are automatically checked on Windows.
 
 ### Layer 5: Cross-Chain Detection
 
@@ -179,7 +218,7 @@ Phase 4: Rollback (on any commit failure)
 
 ### Key Properties
 
-- **Atomic**: `os.replace()` is atomic on both POSIX and Windows
+- **Atomic**: `os.replace()` is atomic on POSIX; on Windows NTFS, uses a 3-step rename-rename-delete pattern with backup/rollback to ensure crash recovery
 - **Crash-safe**: Intermediate temp files prevent corruption on crash
 - **Consistent**: All files commit or none do (transactional)
 - **Concurrent-safe**: Readers never see half-written state
@@ -219,7 +258,12 @@ Level 0 (subprocess) has two execution modes:
 
 ### Process Group Management
 
-All subprocess modes use `start_new_session=True` to create a new process group. On timeout, `os.killpg()` kills the entire group (including child processes), preventing orphan processes.
+All subprocess modes create a new process group for isolation. The implementation is platform-specific:
+
+- **Unix** (`sys.platform != "win32"`): Uses `start_new_session=True` to create a new session/process group. On timeout, `os.killpg()` kills the entire group (including child processes), preventing orphan processes.
+- **Windows** (`sys.platform == "win32"`): Uses `CREATE_NEW_PROCESS_GROUP` creation flag. On timeout, `taskkill /F /T /PID <pid>` kills the entire process tree, including all child processes.
+
+The `_kill_process_group()` function provides a unified cross-platform API that handles both platforms. On failure (process already terminated, permission denied), it falls back to `process.kill()`.
 
 ### Output Truncation
 
@@ -259,3 +303,21 @@ findings = audit_env_file(".env")
 - Use `audit_config_security()` to scan for leaked keys
 - Use `mask_api_key()` when logging key information
 - The library logs an info message when `api_key` is used directly, recommending `api_key_env`
+
+## Cross-Platform Security Notes
+
+### Windows Security Considerations
+
+TerAgent's security sandbox was originally designed for Unix systems. Starting from v0.1.2, comprehensive Windows support has been added:
+
+1. **Command Safety**: 16 Windows-specific dangerous command patterns are now blocked (see Layer 3 above)
+2. **System Path Protection**: Windows system directories are protected from write redirects (see Layer 4 above)
+3. **Shell Detection**: Windows shell executables (`cmd.exe`, `powershell.exe`, `pwsh.exe`) are correctly identified for exec/shell mode classification
+4. **Command Parsing**: `shlex.split()` uses `posix=False` on Windows for correct command-line parsing
+5. **Docker Isolation**: Windows Docker Desktop uses `ContainerUser` instead of uid/gid mapping (slightly reduced isolation)
+
+### macOS and Linux Notes
+
+- **macOS**: Full sandbox support at all levels (except Firecracker, which requires KVM)
+- **Linux**: Full support including Firecracker. Wayland desktops are auto-detected for clipboard operations (`wl-copy`/`wl-paste`)
+- **Path Normalization**: On case-sensitive Unix filesystems, paths are not lowercased during security checks (preserving case sensitivity)

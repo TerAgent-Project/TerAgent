@@ -129,11 +129,15 @@ class AnthropicNativeAdapter(TAPAdapter):
         api_key: str,
         timeout: float = 300.0,
         enable_fake_tools: bool = False,
+        ssl_verify: bool | str = True,
+        http2_enabled: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._timeout = timeout
         self._enable_fake_tools = enable_fake_tools
+        self._ssl_verify = ssl_verify
+        self._http2_enabled = http2_enabled
 
         # httpx timeout: short connect/write/pool, long read (streaming chunks)
         self._http_timeout = httpx.Timeout(
@@ -172,11 +176,12 @@ class AnthropicNativeAdapter(TAPAdapter):
                     max_keepalive_connections=5,
                     keepalive_expiry=60.0,
                 ),
-                http2=True,
+                http2=self._http2_enabled,
+                verify=self._ssl_verify,
             )
             logger.debug(
                 f"{self.__class__.__name__}: created new httpx connection pool "
-                f"(max_connections=10, max_keepalive=5, keepalive_expiry=60s, http2=True)"
+                f"(max_connections=10, max_keepalive=5, keepalive_expiry=60s, http2={self._http2_enabled})"
             )
         return self._http_client
 
@@ -254,7 +259,8 @@ class AnthropicNativeAdapter(TAPAdapter):
             if tool_choice == "auto":
                 return {"type": "auto"}
             elif tool_choice == "none":
-                return {"type": "none"}
+                # Anthropic API 不支持 {"type": "none"}，不传 tool_choice 即可禁用
+                return {"type": "auto"}  # 返回 auto 但调用方应不传 tools 参数
             return {"type": "auto"}
         if isinstance(tool_choice, dict):
             if tool_choice.get("type") == "function":
@@ -616,7 +622,8 @@ class AnthropicNativeAdapter(TAPAdapter):
                                 "message", str(event)
                             )
                             logger.error(f"Anthropic stream error: {err_msg}")
-                            break
+                            # 修复 H15: 抛出异常而非静默 break，让调用者知道流被错误终止
+                            raise RuntimeError(f"Anthropic stream error: {err_msg}")
 
                         event_type = event.get("type", "")
                         if event_type == "content_block_delta":

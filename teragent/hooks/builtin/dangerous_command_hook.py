@@ -27,6 +27,11 @@
 """
 import logging
 
+__all__ = [
+    "DangerousCommandHook",
+    "create_dangerous_command_hook",
+]
+
 from teragent.hooks.manager import (
     HookContext,
     HookDecision,
@@ -37,40 +42,10 @@ from teragent.hooks.manager import (
 
 logger = logging.getLogger(__name__)
 
-
-# 默认危险命令模式 -- 匹配时 DENY 拦截
-DEFAULT_DANGEROUS_PATTERNS: list[str] = [
-    "rm -rf",
-    "rm -r /",
-    "sudo rm",
-    "sudo ",
-    "mkfs",
-    "dd if=",
-    ":(){ :|:& };:",      # fork bomb
-    "> /dev/sd",           # direct disk write
-    "chmod 777",
-    "chown root",
-    "shutdown",
-    "reboot",
-    "init 0",
-    "init 6",
-    "halt",
-    "poweroff",
-    "del /f /s /q",       # Windows recursive force delete
-    "format ",             # Windows disk format
-    "rd /s /q",            # Windows recursive directory delete
-]
-
-# 警告命令模式 -- 匹配时记录警告但 ALLOW 放行
-# 这些命令可能引入不安全依赖或改变运行环境，需要用户知晓但不硬拦截
-WARNING_PATTERNS: list[str] = [
-    "pip install",
-    "npm install",
-    "apt-get install",
-    "yum install",
-    "brew install",
-    "cargo install",
-]
+# Note: DEFAULT_DANGEROUS_PATTERNS and WARNING_PATTERNS were previously defined
+# here as module-level constants but were never referenced — all risk classification
+# is delegated to sandbox.classify_command_risk(). They have been removed to avoid
+# dead code. If you need the pattern lists, find them in teragent.security.sandbox.
 
 
 def create_dangerous_command_hook() -> "DangerousCommandHook":

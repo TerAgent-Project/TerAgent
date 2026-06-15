@@ -139,13 +139,15 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 |----------|----------------------|---------------|
 | `default` | Standard chat messages | Generic OpenAI-protocol models |
 | `glm` | Recency effect (key instruction last) | GLM series (Zhipu AI) |
-| `anthropic` | XML tag structured + Mode B | Claude series |
-| `deepseek` | Minimalist compilation | DeepSeek models |
-| `deepseek_v4` | Cache-aware layout + thinking mode + 1M context optimization | DeepSeek V4-Flash/Pro |
-| `deepseek_v4_flash` | Minimal prompts for fast response | DeepSeek V4-Flash |
-| `deepseek_v4_pro` | Full prompts + deep reasoning | DeepSeek V4-Pro |
 | `glm_5` | Recency effect + long-horizon + self-evaluation | GLM-5 |
-| `minimax_m3` | MSA full-text injection + multimodal | MiniMax M3 |
+| `glm_52` | 1M context + dual thinking (High/Max) + PreservedThinking + 5V-Turbo coordination | GLM-5.2 |
+| `glm_5v_turbo` | Vision analysis for GLM-5V-Turbo | GLM-5V-Turbo (vision model) |
+| `anthropic` | XML tag structured + Mode B | Claude series |
+| `deepseek` | Minimalist compilation | DeepSeek V3 models |
+| `deepseek_v4` | Cache-aware layout + thinking mode + 1M context optimization | DeepSeek V4-Flash/Pro (variant via `compiler_variant`) |
+| `minimax_m3` | MSA full-text injection + multimodal + desktop context | MiniMax M3 |
+
+> **Note:** `deepseek_v4_flash` and `deepseek_v4_pro` are **NOT** separate compilers — they are variants of `deepseek_v4` controlled by the `compiler_variant` parameter (`"flash"` or `"pro"`).
 
 ### Adapters
 
@@ -153,6 +155,7 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 |---------|----------|-------|
 | `openai_compatible` | OpenAI `/chat/completions` with SSE | Works with GLM, DeepSeek, OpenRouter, etc. |
 | `anthropic_native` | Anthropic `/messages` with Anthropic SSE | Direct Anthropic API |
+| `glm_native` | Zhipu AI native API | GLM-5/5.2 with Zhipu AI-specific optimizations |
 | `minimax_native` | MiniMax native API with rate limit tracking | MiniMax M3 multimodal/desktop |
 | `mock` | No HTTP calls | For testing |
 
@@ -163,12 +166,14 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 | `default` | `openai_compatible` | Generic OpenAI-protocol models | Standard chat messages |
 | `glm` | `openai_compatible` | GLM series (Zhipu AI) | Recency effect optimization |
 | `glm_5` | `openai_compatible` | GLM-5 (long-horizon) | Deep reasoning + long-horizon task support |
+| `glm_5` | `glm_native` | GLM-5 via Zhipu AI native API | Deep reasoning + native optimizations |
+| `glm_52` | `openai_compatible` | GLM-5.2 (1M + dual thinking) | 1M context + PreservedThinking + 5V-Turbo coordination |
+| `glm_52` | `glm_native` | GLM-5.2 via Zhipu AI native API | 1M context + native optimizations |
+| `glm_5v_turbo` | `openai_compatible` | GLM-5V-Turbo (vision) | Vision analysis compilation |
 | `anthropic` | `openai_compatible` | Claude via OpenRouter | XML tags + recency |
 | `anthropic` | `anthropic_native` | Claude via Anthropic API | XML tags + system/user separation (Mode B) |
 | `deepseek` | `openai_compatible` | DeepSeek V3 models | Minimalist compilation |
-| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | Cache-aware layout + thinking mode |
-| `deepseek_v4_flash` | `openai_compatible` | DeepSeek V4-Flash | Minimal prompts for fast response |
-| `deepseek_v4_pro` | `openai_compatible` | DeepSeek V4-Pro | Full prompts + deep reasoning |
+| `deepseek_v4` | `openai_compatible` | DeepSeek V4-Flash/Pro | Cache-aware layout + thinking mode (variant: flash/pro) |
 | `minimax_m3` | `openai_compatible` | MiniMax M3 (text) | MSA full-text injection |
 | `minimax_m3` | `minimax_native` | MiniMax M3 (multimodal/desktop) | Native multimodal + rate limit tracking |
 | `default` | `mock` | Testing | No HTTP calls |
@@ -180,3 +185,7 @@ tracer.export_dpo_pairs_jsonl()  # Write to JSONL file
 - [Configuration Guide](configuration.md) — agent.toml and typed config
 - [API Reference](api-reference.md) — Complete module reference
 - [Self-RL Guide](self-rl.md) — TAP tracing and DPO pair generation
+- [Four-Model Adaptation Guide](adaptation_guide.md) — DeepSeek V4, MiniMax M3, GLM-5, GLM-5.2 configuration and best practices
+- [GLM-5.2 Usage Guide](glm_52_guide.md) — 1M context, dual thinking, PreservedThinking, 5V-Turbo coordination
+- [Multimodal Guide](multimodal_guide.md) — Image, video, and desktop operations with MiniMax M3
+- [Long-Horizon Task Guide](long_horizon_guide.md) — 8-hour+ autonomous tasks with GLM-5/5.2

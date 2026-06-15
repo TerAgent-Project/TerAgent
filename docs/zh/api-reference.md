@@ -15,11 +15,21 @@ request = TAPRequest(
     instruction="Implement user login module",  # Core instruction
     constraints=["Python 3.10+"],  # Hard constraints
     output_format_hint="<file path='...'>complete code</file>",  # Desired format
+    thinking_mode="high",               # 扩展：思考模式（auto/deep/quick/high/max）
+    multimodal_context=[...],           # 扩展：MultimodalContent 列表（图像/视频）
+    long_horizon=None,                  # 扩展：LongHorizonConfig，用于长时间运行任务
+    cache_preference=None,              # 扩展：缓存偏好提示，用于缓存感知编译器
 )
 ```
 
 **方法：**
 - `estimate_prompt_tokens() -> int` — 粗略的 Token 数估算
+
+**扩展字段：**
+- `thinking_mode: str | None` — 控制推理深度。取值：`"auto"`、`"quick"`、`"deep"`（DeepSeek V4）；`"high"`、`"max"`（GLM-5.2）。请求级别的覆盖，优先于驱动级默认值。
+- `multimodal_context: list[MultimodalContent] | None` — 多模态内容项列表（图像、视频），用于支持视觉的模型（M3、GLM-5.2 + 5V-Turbo）。每项包含 `type`（`"image_url"` 或 `"video_url"`）及对应的 URL/数据。
+- `long_horizon: LongHorizonConfig | None` — 长时自主任务配置（GLM-5/5.2）。包含 `max_duration_hours`、`checkpoint_interval_minutes`、`evaluation_interval_steps` 等。
+- `cache_preference: dict | None` — 缓存感知编译器提示（如 DeepSeek V4）。控制提示布局优化以提高缓存命中率。
 
 ### TAPResponse
 
@@ -31,6 +41,9 @@ response = TAPResponse(
     usage={"prompt_tokens": 100, "completion_tokens": 200},  # Token usage
     tool_calls=[...],  # Structured tool calls from API
     finish_reason="stop",  # Why the model stopped
+    cache_hit_tokens=3000,        # 扩展：缓存命中的 Token 数（缓存感知模型）
+    thinking_content="...",       # 扩展：推理追踪内容（思考模式模型）
+    long_horizon_status=None,     # 扩展：长时任务状态信息
 )
 ```
 
@@ -38,6 +51,11 @@ response = TAPResponse(
 - `prompt_tokens -> int`
 - `completion_tokens -> int`
 - `total_tokens -> int`
+
+**扩展字段：**
+- `cache_hit_tokens: int | None` — 从缓存提供的 Token 数（DeepSeek V4 开启 `cache_aware=true` 时）。用于成本追踪 —— 缓存命中显著更便宜。
+- `thinking_content: str | None` — 模型内部推理追踪，在思考模式激活时可用（DeepSeek V4 `deep` 模式、GLM-5.2 `high`/`max` 模式）。
+- `long_horizon_status: dict | None` — 长时任务步骤的状态信息，包括检查点信息、子目标进度和策略切换通知。
 
 ### CompiledPrompt
 
@@ -51,6 +69,7 @@ prompt = CompiledPrompt(
         {"role": "user", "content": "..."},
     ],
     tools=[...],
+    extra={"cache_aware": True},  # 编译器特定参数
 )
 
 # Mode B: System + User separation (Anthropic native)
@@ -58,11 +77,25 @@ prompt = CompiledPrompt(
     system_prompt="...",
     user_message="...",
     tools=[...],
+    extra={},  # 额外字典，用于编译器特定参数
 )
 ```
 
 **属性：**
 - `mode -> str` — 返回 `"messages"`、`"system_user"` 或 `"empty"`
+
+**`extra` 字典字段：**
+`extra` 字典携带编译器特定参数，供适配器定制行为：
+
+| 键 | 编译器 | 适配器 | 描述 |
+|-----|----------|---------|-------------|
+| `cache_aware` | `deepseek_v4` | `openai_compatible` | 是否冻结工具定义以优化缓存命中率 |
+| `variant` | `deepseek_v4` | `openai_compatible` | `"flash"` 或 `"pro"` — 控制提示策略 |
+| `minimax_video_mode` | `minimax_m3` | `minimax_native` | `"understand"` 或 `"summarize"` — 视频处理模式 |
+| `minimax_frame_sampling` | `minimax_m3` | `minimax_native` | `"auto"`、`"uniform"`、`"keyframe"` 或 `"dense"` |
+| `thinking_mode` | `glm_52` | `openai_compatible` | `"high"` 或 `"max"` — 双思考模式 |
+| `preserved_thinking` | `glm_52` | `openai_compatible` | 是否注入保留的推理追踪 |
+| `vision_coordination` | `glm_52` | `openai_compatible` | 是否激活 5V-Turbo 视觉协调 |
 
 ### ModelProvider
 
@@ -597,3 +630,356 @@ args, kwargs = await bus.wait_for("agent_done", timeout=30)
 names = bus.get_event_names()
 history = bus.get_event_history(limit=50)
 ```
+
+## 路由模块（`teragent.router`）
+
+### RoutingReason
+
+```python
+from teragent.router import RoutingReason
+
+# 枚举值，指示模型选择的原因
+RoutingReason.INTENT                    # 默认基于意图的路由
+RoutingReason.MULTIMODAL_OVERRIDE       # 包含多模态内容 → M3
+RoutingReason.DESKTOP_OVERRIDE          # 包含桌面上下文 → M3
+RoutingReason.VIDEO_OVERRIDE            # 包含视频内容 → M3
+RoutingReason.CONTEXT_LENGTH_OVERRIDE   # 上下文 >200K → V4/M3
+RoutingReason.LONG_HORIZON_OVERRIDE     # 长时任务 → GLM-5
+RoutingReason.COST_OPTIMIZATION         # 预算约束 → 更便宜的模型
+RoutingReason.DEGRADATION               # 主模型不可用 → 降级
+RoutingReason.PIPELINE_PROFILE          # 显式管道配置文件分配
+RoutingReason.EXPLICIT                  # 用户显式指定模型
+```
+
+### RoutingDecision
+
+```python
+from teragent.router import RoutingDecision
+
+decision = RoutingDecision(
+    selected_driver="openai_compatible.deepseek_v4_pro",
+    selected_compiler="deepseek_v4",
+    reason=RoutingReason.INTENT,
+    intent="design",
+)
+```
+
+**属性：**
+- `selected_driver: str` — 完整驱动名称（如 `"openai_compatible.deepseek_v4_pro"`）
+- `selected_compiler: str` — 编译器名称（如 `"deepseek_v4"`）
+- `reason: RoutingReason` — 主要路由原因
+- `intent: str` — 请求的意图类型
+- `trace: list[tuple[str, str, str]]` — 有序的 (原因, 候选, 接受/拒绝) 元组列表
+- `timestamp: float` — 决策时间戳（纪元秒）
+- `estimated_cost: float` — 此请求的估算成本
+- `context_tokens: int` — 估算的上下文 Token 数
+
+**方法：**
+- `add_trace(reason, candidate, result)` — 追加调试追踪条目
+
+### RoutingTable
+
+```python
+from teragent.router import RoutingTable
+
+table = RoutingTable(
+    multimodal_driver="openai_compatible.minimax_m3",
+    desktop_driver="openai_compatible.minimax_m3",
+    long_horizon_driver="openai_compatible.glm_5",
+)
+```
+
+**关键属性：**
+- `intent_routing: dict[str, str]` — 意图 → 默认驱动名称映射
+- `multimodal_driver: str` — 多模态内容驱动（默认：M3）
+- `desktop_driver: str` — 桌面上下文驱动（默认：M3）
+- `long_horizon_driver: str` — 长时任务驱动（默认：GLM-5）
+- `long_context_candidates: list[str]` — 支持 >200K 上下文的模型
+- `cost_fallback_order: list[str]` — 从最便宜到最贵的模型顺序
+- `degradation_map: dict[str, str]` — 主模型 → 降级映射
+- `model_pricing: dict[str, dict[str, float]]` — 每模型每百万 Token CNY 定价
+- `max_context_per_model: dict[str, int]` — 每模型最大上下文 Token 数
+- `compiler_map: dict[str, str]` — 驱动名称 → 编译器名称映射
+
+**方法：**
+- `resolve_compiler(driver_name) -> str` — 从驱动名称解析编译器名称
+- `get_intent_driver(intent) -> str` — 获取意图类型的默认驱动
+- `get_pricing(driver_name) -> dict[str, float]` — 获取模型的定价字典
+- `from_dict(data) -> RoutingTable` — 从配置字典创建 RoutingTable
+
+### ModelRouter
+
+```python
+from teragent.router import ModelRouter, RoutingTable, RoutingDecision
+
+router = ModelRouter(
+    available_providers={"openai_compatible.glm_5": glm_provider, ...},
+    routing_table=RoutingTable(),
+)
+
+decision = router.route(tap_request)
+provider = router.get_provider(decision.selected_driver)
+```
+
+**方法：**
+- `route(request) -> RoutingDecision` — 通过 6 步决策流程路由 TAP 请求
+- `route_for_stage(stage, request) -> RoutingDecision` — 使用活动管道配置文件按阶段路由
+- `get_decision_log() -> list[RoutingDecision]` — 获取所有路由决策日志
+- `get_provider(driver_name) -> ModelProvider | None` — 按驱动名称获取提供者
+- `set_monthly_budget(limit_cny, warning_threshold, auto_downgrade)` — 配置月度预算
+
+### PipelineProfile
+
+```python
+from teragent.router import PipelineProfile
+
+profile = PipelineProfile(
+    name="default",
+    description="Default pipeline configuration",
+    design_driver="openai_compatible.deepseek_v4_pro",
+    plan_driver="openai_compatible.glm_5",
+    execute_driver="openai_compatible.glm_5",
+    review_driver="openai_compatible.deepseek_v4_pro",
+)
+```
+
+**方法：**
+- `get_driver_for_stage(stage) -> str` — 获取管道阶段的驱动名称
+- `from_dict(name, data) -> PipelineProfile` — 从配置字典创建
+
+### PipelineManager
+
+```python
+from teragent.router import PipelineManager, PipelineProfile
+
+pm = PipelineManager()
+
+# 注册配置文件
+pm.register_profile(PipelineProfile(name="budget", ...))
+
+# 运行时切换配置文件
+pm.set_active_profile("budget")
+
+# 获取阶段的驱动
+driver = pm.get_driver("execute")
+```
+
+**方法：**
+- `register_profile(profile) -> None` — 注册管道配置文件
+- `set_active_profile(name) -> bool` — 切换到指定配置文件（找到则返回 True）
+- `get_driver(stage) -> str` — 从活动配置文件获取阶段的驱动名称
+- `list_profiles() -> list[str]` — 列出所有已注册的配置文件名称
+- `get_profile(name) -> PipelineProfile | None` — 按名称获取配置文件
+- `from_config(config, routing_table) -> PipelineManager` — 从 TOML 配置字典创建
+
+**属性：**
+- `active_profile_name -> str` — 当前活动配置文件名称
+- `active_profile -> PipelineProfile` — 当前活动的 PipelineProfile
+
+---
+
+## 长时任务模块（`teragent.long_horizon`）
+
+### SubGoal
+
+```python
+from teragent.long_horizon import SubGoal
+
+goal = SubGoal(
+    id="sg_1",
+    description="Design database schema",
+    completion_criteria="All tables defined with proper constraints",
+    estimated_steps=10,
+    dependencies=["sg_0"],  # 依赖于 sg_0
+    status="pending",        # pending | in_progress | completed | failed
+)
+```
+
+**属性：**
+- `id: str` — 唯一标识符
+- `description: str` — 子目标描述
+- `completion_criteria: str` — 可衡量的完成标准
+- `estimated_steps: int` — 预估步骤数
+- `dependencies: list[str]` — 依赖的子目标 ID（DAG 拓扑）
+- `status: str` — 当前状态：`pending` | `in_progress` | `completed` | `failed`
+
+### PhaseResult
+
+```python
+from teragent.long_horizon import PhaseResult
+
+result = PhaseResult(
+    sub_goal_id="sg_1",
+    success=True,
+    result_text="Database schema designed with 5 tables...",
+    steps_taken=8,
+    files_created=["src/models/user.py", "src/models/role.py"],
+    files_modified=["src/db/init.py"],
+    errors=[],
+)
+```
+
+**属性：**
+- `sub_goal_id: str` — 对应的子目标 ID
+- `success: bool` — 阶段是否成功
+- `result_text: str` — 模型输出文本
+- `steps_taken: int` — 此阶段消耗的步骤数
+- `files_created: list[str]` — 创建的文件
+- `files_modified: list[str]` — 修改的文件
+- `errors: list[str]` — 错误消息
+
+### LongHorizonResult
+
+```python
+from teragent.long_horizon import LongHorizonResult
+
+result = LongHorizonResult(
+    task_id="task_001",
+    goal="Implement user management system",
+    success=True,
+    total_steps=120,
+    total_elapsed_minutes=95.5,
+    completed_sub_goals=5,
+    total_sub_goals=5,
+    strategy_switches=1,
+    phase_results=[...],
+    final_summary="All sub-goals completed successfully",
+    checkpoints_saved=6,
+)
+```
+
+**属性：**
+- `task_id: str` — 唯一任务标识符
+- `goal: str` — 原始目标描述
+- `success: bool` — 整体是否成功
+- `total_steps: int` — 消耗的总步骤数
+- `total_elapsed_minutes: float` — 总耗时（分钟）
+- `completed_sub_goals: int` — 已完成子目标数
+- `total_sub_goals: int` — 总子目标数
+- `strategy_switches: int` — 策略切换次数
+- `phase_results: list[PhaseResult]` — 详细的阶段结果
+- `final_summary: str` — 最终摘要文本
+- `checkpoints_saved: int` — 保存的检查点数
+
+### LongHorizonTaskManager
+
+```python
+from teragent.long_horizon import LongHorizonTaskManager
+from teragent.core.tap import LongHorizonConfig
+
+manager = LongHorizonTaskManager(
+    model=provider,
+    tool_registry=registry,
+    event_bus=bus,
+    config=LongHorizonConfig(
+        max_duration_hours=8.0,
+        checkpoint_interval_minutes=15.0,
+        evaluation_interval_steps=10,
+    ),
+)
+
+# 启动长时任务
+result = await manager.run("Implement user management system")
+
+# 从检查点恢复
+result = await manager.resume_from_checkpoint("task_001")
+
+# 获取状态
+status = manager.get_status("task_001")
+```
+
+**方法：**
+- `run(goal, context=None) -> LongHorizonResult` — 启动长时自主任务
+- `resume_from_checkpoint(task_id) -> LongHorizonResult` — 从检查点恢复任务
+- `cancel(task_id) -> bool` — 取消运行中的任务
+- `get_status(task_id) -> dict` — 获取任务状态
+- `list_active_tasks() -> list[str]` — 列出活动任务 ID
+- `save_checkpoint(task_id) -> str` — 手动保存检查点
+
+### CheckpointStore
+
+```python
+from teragent.long_horizon import CheckpointStore
+
+store = CheckpointStore(base_dir=".teragent/checkpoints")
+
+# 保存检查点
+checkpoint_id = store.save(task_id="task_001", state={...})
+
+# 加载检查点
+state = store.load(checkpoint_id)
+
+# 列出检查点
+checkpoints = store.list_for_task("task_001")
+
+# 清理旧检查点
+store.cleanup(task_id="task_001", keep_last=5)
+```
+
+### SelfEvaluator
+
+```python
+from teragent.long_horizon import SelfEvaluator
+
+evaluator = SelfEvaluator(model=provider)
+
+# 评估当前进度
+evaluation = await evaluator.evaluate(
+    goal="Implement user management system",
+    sub_goals=[...],
+    completed_results=[...],
+    current_state={...},
+)
+# → SelfEvaluation(score=0.8, should_continue=True, suggested_strategy="refine", ...)
+```
+
+### StrategySwitcher
+
+```python
+from teragent.long_horizon import StrategySwitcher
+
+switcher = StrategySwitcher()
+
+# 检查是否需要切换策略
+should_switch, new_strategy = switcher.check(
+    current_strategy="direct",
+    evaluation=evaluation,
+    consecutive_similar=3,
+)
+
+# 记录策略切换
+switcher.record_switch("direct", "decompose", reason="stagnation detected")
+```
+
+---
+
+## 基准测试模块（`teragent.benchmark`）
+
+### BenchmarkRunner
+
+```python
+from teragent.benchmark import BenchmarkRunner
+
+runner = BenchmarkRunner(
+    model=provider,
+    tool_registry=registry,
+    output_dir=".teragent/benchmarks",
+)
+
+# 运行基准测试
+results = await runner.run_suite(
+    suite_name="code_generation",
+    task_configs=[...],
+)
+
+# 生成报告
+report = runner.generate_report(results)
+runner.save_report(report, format="markdown")
+```
+
+**方法：**
+- `run_suite(suite_name, task_configs) -> list[BenchmarkResult]` — 运行基准测试套件
+- `run_single(task_config) -> BenchmarkResult` — 运行单个基准测试
+- `generate_report(results) -> BenchmarkReport` — 生成报告
+- `save_report(report, format) -> str` — 保存报告到文件
+- `compare_reports(report_a, report_b) -> ComparisonReport` — 比较两份报告

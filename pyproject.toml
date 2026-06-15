@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "teragent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Terminal AI Agent Library — TAP IR + Model-Specific Compilation"
 readme = "README.md"
 license = "Apache-2.0"
@@ -69,7 +69,7 @@ Changelog = "https://github.com/teragent/teragent/blob/main/CHANGELOG.md"
 include = ["teragent*"]
 
 [tool.setuptools.package-data]
-teragent = ["py.typed"]
+teragent = ["py.typed", "*.pyi"]
 
 # ===== pytest 配置 =====
 

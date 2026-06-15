@@ -1,7 +1,7 @@
 # TerAgent 国产芯片部署指南 — Ascend 910B / 950PR
 
 > **适用版本：** TerAgent v0.1.1+  
-> **目标模型：** GLM-5 / DeepSeek V4 / MiniMax M3  
+> **目标模型：** GLM-5 / GLM-5.2 / DeepSeek V4 / MiniMax M3  
 > **硬件平台：** 华为昇腾 Ascend 910B、Ascend 950PR  
 > **状态：** 部署指南 + 配置模板（实际硬件验证待后续执行）
 
@@ -14,11 +14,12 @@
 3. [GLM-5 部署 — Ascend 910B](#3-glm-5-部署--ascend-910b)
 4. [DeepSeek V4 部署 — Ascend 950PR](#4-deepseek-v4-部署--ascend-950pr)
 5. [MiniMax M3 部署 — Ascend 910B](#5-minimax-m3-部署--ascend-910b)
-6. [TerAgent 本地部署配置](#6-teragent-本地部署配置)
-7. [验证清单](#7-验证清单)
-8. [性能调优](#8-性能调优)
-9. [常见问题与解决方案](#9-常见问题与解决方案)
-10. [附录](#10-附录)
+6. [GLM-5.2 部署 — Ascend 910B](#6-glm-52-部署--ascend-910b)
+7. [TerAgent 本地部署配置](#7-teragent-本地部署配置)
+8. [验证清单](#8-验证清单)
+9. [性能调优](#9-性能调优)
+10. [常见问题与解决方案](#10-常见问题与解决方案)
+11. [附录](#11-附录)
 
 ---
 
@@ -29,20 +30,19 @@
 TerAgent 国产化部署架构如下：
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      TerAgent 中间件层                       │
-│  (agent.local.toml 配置 → 本地推理端点 http://localhost:8xxx) │
-├──────────────┬──────────────────┬───────────────────────────┤
-│  GLM-5     │  DeepSeek V4     │  MiniMax M3              │
-│  :8001/v1    │  :8002/v1        │  :8003/v1                │
-├──────────────┼──────────────────┼───────────────────────────┤
-│  MindIE /    │  vLLM-Ascend /   │  MindIE /                │
-│  vLLM-Ascend │  Ascend PyTorch  │  vLLM-Ascend             │
-├──────────────┼──────────────────┼───────────────────────────┤
-│  CANN 8.x    │  CANN 8.x        │  CANN 8.x                │
-│  (Ascend     │  (Ascend 950PR)  │  (Ascend 910B)           │
-│   910B)      │                  │                           │
-└──────────────┴──────────────────┴───────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                      TerAgent 中间件层                                │
+│  (agent.local.toml 配置 → 本地推理端点 http://localhost:8xxx)          │
+├──────────────┬──────────────┬──────────────┬────────────────────────┤
+│  GLM-5       │  GLM-5.2     │  DeepSeek V4 │  MiniMax M3           │
+│  :8001/v1    │  :8004/v1    │  :8002/v1    │  :8003/v1              │
+├──────────────┼──────────────┼──────────────┼────────────────────────┤
+│  MindIE /    │  MindIE /    │  vLLM-Ascend │  MindIE /              │
+│  vLLM-Ascend │  vLLM-Ascend │  Ascend PT   │  vLLM-Ascend           │
+├──────────────┼──────────────┼──────────────┼────────────────────────┤
+│  CANN 8.x    │  CANN 8.x    │  CANN 8.x    │  CANN 8.x              │
+│  (910B)      │  (910B x2)   │  (950PR)     │  (910B x2)             │
+└──────────────┴──────────────┴──────────────┴────────────────────────┘
 ```
 
 ### 1.2 模型-硬件对应关系
@@ -50,6 +50,7 @@ TerAgent 国产化部署架构如下：
 | 模型 | 推荐芯片 | 上下文窗口 | 关键特性 | 推荐推理框架 |
 |------|---------|-----------|---------|------------|
 | **GLM-5** | Ascend 910B | 200K tokens | 长程任务（8h 自治）、深度推理 | MindIE / vLLM-Ascend |
+| **GLM-5.2** | Ascend 910B ×2 | 1M tokens | 长程+1M 上下文、High/Max 双思考、PreservedThinking、5V-Turbo 视觉协调 | MindIE / vLLM-Ascend |
 | **DeepSeek V4** | Ascend 950PR | 1M tokens | Flash/Pro 双变体、缓存感知 | vLLM-Ascend / Ascend PyTorch |
 | **MiniMax M3** | Ascend 910B | 1M tokens | 原生多模态、桌面操作、MSA | MindIE / vLLM-Ascend |
 
@@ -592,27 +593,248 @@ print('Video processing OK')
 
 ---
 
-## 6. TerAgent 本地部署配置
+## 6. GLM-5.2 部署 — Ascend 910B
 
-### 6.1 配置模板
+GLM-5.2 是智谱 AI 推出的旗舰模型，支持 1M 超长上下文、High/Max 双思考模式、PreservedThinking 编码计划保持、5V-Turbo 视觉协调等高级特性。GLM-5.2 在 GLM-5 基础上将上下文窗口从 200K 扩展到 1M，同时引入双思考模式和上下文自动降级机制。
+
+### 6.1 模型权重下载
+
+```bash
+# 创建模型存储目录
+mkdir -p /data/models/glm-5.2
+cd /data/models/glm-5.2
+
+# 方式一：从 ModelScope 下载（国内推荐）
+pip install modelscope
+modelscope download --model ZhipuAI/glm-5.2 --local_dir /data/models/glm-5.2
+
+# 方式二：从 HuggingFace 下载（需网络代理）
+# git lfs install
+# git clone https://huggingface.co/ZhipuAI/glm-5.2
+
+# 方式三：手动下载
+# 访问 https://modelscope.cn/models/ZhipuAI/glm-5.2
+# 下载所有文件到 /data/models/glm-5.2/
+```
+
+**模型文件结构预期：**
+
+```
+/data/models/glm-5.2/
+├── config.json
+├── tokenizer_config.json
+├── tokenizer.model
+├── model-00001-of-000xx.safetensors
+├── model-00002-of-000xx.safetensors
+├── ...
+└── modeling_glm_52.py  (如有)
+```
+
+### 6.2 硬件要求
+
+GLM-5.2 的 1M 上下文对硬件要求较高：
+
+| 配置项 | 最低要求 | 推荐配置 |
+|--------|---------|---------|
+| AI 处理器 | Ascend 910B ×1 | **Ascend 910B ×2**（1M 上下文必需） |
+| 内存 | 512 GB DDR4 | 1 TB DDR4 |
+| 系统盘 | 500 GB NVMe SSD | 1 TB NVMe SSD |
+| 模型存储盘 | 1 TB NVMe SSD | 2 TB NVMe SSD |
+| 网络 | 10 GbE | 25 GbE（多卡集群） |
+| HCCN | RoCE v2 | RoCE v2 |
+
+> **重要：** GLM-5.2 在 1M 上下文模式下需要 Ascend 910B ×2。单卡可运行 200K 上下文模式（降级模式），但 1M 上下文需要双卡并行以容纳 KV cache。
+
+### 6.3 推理框架部署
+
+#### 方式一：MindIE 推理（推荐）
+
+```bash
+# 1. 安装 MindIE
+pip install mindie
+
+# 2. 启动 GLM-5.2 推理服务（1M 上下文）
+python -m mindie.server \
+    --model_path /data/models/glm-5.2 \
+    --device ascend \
+    --port 8004 \
+    --max_batch_size 4 \
+    --max_seq_len 1000000 \
+    --kv_cache_size 16384 \
+    --tensor_parallel_size 2
+
+# 3. 验证服务
+curl http://localhost:8004/v1/models
+# 预期返回：{"data": [{"id": "glm-5.2", ...}]}
+```
+
+#### 方式二：vLLM-Ascend 推理
+
+```bash
+# 1. 安装 vLLM-Ascend
+pip install vllm-ascend
+
+# 2. 启动推理服务（1M 上下文，双卡并行）
+python -m vllm.entrypoints.openai.api_server \
+    --model /data/models/glm-5.2 \
+    --served-model-name glm-5.2 \
+    --device npu \
+    --port 8004 \
+    --max-model-len 1000000 \
+    --gpu-memory-utilization 0.90 \
+    --tensor-parallel-size 2 \
+    --enable-prefix-caching \
+    --kv-cache-dtype auto \
+    --swap-space 16 \
+    --max-num-seqs 2 \
+    --trust-remote-code
+
+# 3. 验证服务
+curl http://localhost:8004/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "glm-5.2",
+        "messages": [{"role": "user", "content": "你好"}],
+        "max_tokens": 100
+    }'
+```
+
+### 6.4 端点配置
+
+GLM-5.2 推理服务启动后，将在 `http://localhost:8004/v1` 提供 OpenAI 兼容的 API 端点：
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/models` | GET | 列出可用模型 |
+| `/v1/chat/completions` | POST | Chat 补全接口 |
+| `/v1/completions` | POST | Text 补全接口 |
+| `/v1/tokenize` | POST | Tokenizer 接口 |
+| `/health` | GET | 健康检查 |
+
+### 6.5 1M 上下文配置
+
+GLM-5.2 的 1M 上下文需要特殊配置以确保稳定性：
+
+```bash
+# 1M 上下文的关键配置
+--max-model-len 1000000       # 最大序列长度 1M
+--enable-prefix-caching        # 前缀缓存，减少重复计算
+--kv-cache-dtype auto          # 自动选择 KV cache 数据类型
+--gpu-memory-utilization 0.90  # 高显存利用率，为 1M 预留空间
+--swap-space 16                # CPU swap 空间 (GB)，防止 OOM
+--max-num-seqs 2               # 减少并发序列，为 1M 上下文腾出显存
+--tensor-parallel-size 2       # 双卡并行，分散 KV cache 到两张卡
+```
+
+**1M 上下文注意事项：**
+- Ascend 910B 双卡可支持 1M 上下文，并发数需降低到 2
+- 单卡仅支持 200K 上下文（降级模式），需配置上下文自动降级
+- 建议开启 prefix caching 以减少重复前缀的计算开销
+- 长上下文推理延迟较高，建议配合 TerAgent 的上下文压缩策略
+- TerAgent 的 GLM52Compiler 会自动进行缓存前缀冻结和尾部强化
+- KV cache 占用约 80 GB（1M 上下文），需双卡并行
+
+### 6.6 双思考模式配置
+
+GLM-5.2 的 High/Max 双思考模式需要在推理服务端和 TerAgent 两侧配置：
+
+**推理服务端配置：**
+
+```bash
+# 启动时配置双思考模式支持
+python -m vllm.entrypoints.openai.api_server \
+    --model /data/models/glm-5.2 \
+    --device npu \
+    --port 8004 \
+    --max-model-len 1000000 \
+    --enable-prefix-caching \
+    --max-num-seqs 2 \
+    --trust-remote-code
+```
+
+**TerAgent 侧配置：**
+
+```toml
+[drivers.openai_compatible.glm_52]
+base_url = "http://localhost:8004/v1"
+api_key_env = "GLM_API_KEY"
+model = "glm-5.2"
+compiler = "glm_52"
+max_context_tokens = 1_000_000
+max_output_tokens = 128_000
+thinking_mode = "high"                    # 默认 High 思考模式
+dual_thinking_enabled = true              # 启用 High/Max 双思考切换
+preserved_thinking_enabled = true         # 启用 PreservedThinking
+vision_coordination_enabled = true        # 启用 5V-Turbo 视觉协调
+context_degradation_enabled = true        # 启用上下文自动降级
+long_horizon_enabled = true               # 启用长程任务模式
+```
+
+**双思考模式说明：**
+
+| 模式 | 推理深度 | 响应时间 | Token 消耗 | 适用场景 |
+|------|---------|---------|-----------|---------|
+| **High** | 标准深度推理 | 中等 | ~1.2x | 代码生成、分析、规划 |
+| **Max** | 最大推理深度 | 慢（2-5x） | ~3-5x | 架构决策、复杂调试 |
+
+### 6.7 上下文自动降级配置
+
+GLM-5.2 支持在 NPU 内存压力下自动从 1M 降级到 200K 上下文：
+
+```toml
+[drivers.openai_compatible.glm_52]
+context_degradation_enabled = true
+context_degradation_threshold = 0.90     # NPU 内存利用率 > 90% 触发降级
+context_degradation_target = 200_000     # 降级到 200K 上下文
+context_degradation_recovery_threshold = 0.70  # 内存 < 70% 时恢复到 1M
+```
+
+**降级行为：**
+1. NPU 内存利用率超过 90% → 触发降级
+2. 最大上下文从 1M 降至 200K
+3. 现有上下文压缩到 200K 范围内
+4. 保留系统提示、最近消息和工具定义
+5. NPU 内存回落到 70% 以下 → 恢复 1M 模式
+6. 所有降级事件记录日志
+
+### 6.8 5V-Turbo 视觉协调配置
+
+GLM-5.2 可与 GLM-5V-Turbo 协调实现视觉→代码→验证循环：
+
+```toml
+[drivers.openai_compatible.glm_5v_turbo]
+base_url = "http://localhost:8004/v1"
+api_key_env = "GLM_API_KEY"
+model = "glm-5v-turbo"
+compiler = "glm_5v_turbo"
+max_context_tokens = 128_000
+```
+
+> **注意：** GLM-5V-Turbo 可与 GLM-5.2 共享同一推理服务端口（8004），通过模型名区分。
+
+---
+
+## 7. TerAgent 本地部署配置
+
+### 7.1 配置模板
 
 TerAgent 提供了专用的本地部署配置模板 `agent.local.toml`，可直接使用：
 
 ```bash
 # 复制模板到项目根目录
-cp agent.local.toml agent.toml
+cp examples/agent.local.toml agent.toml
 
 # 或指定配置文件启动
-export TERAGENT_CONFIG=/path/to/TerAgent/agent.local.toml
+export TERAGENT_CONFIG=/path/to/TerAgent/examples/agent.local.toml
 ```
 
-完整配置模板见项目根目录的 `agent.local.toml` 文件。
+完整配置模板见 `examples/agent.local.toml` 文件。
 
-### 6.2 核心配置说明
+### 7.2 核心配置说明
 
-#### 6.2.1 零成本配置
+#### 7.2.1 零成本配置
 
-本地推理的核心优势是**零推理费用**。在 `agent.local.toml` 中：
+本地推理的核心优势是**零推理费用**。在 `examples/agent.local.toml` 中：
 
 ```toml
 [circuit_breaker.budget]
@@ -621,7 +843,7 @@ cost_per_million_output = 0.0   # 本地推理无输出成本
 enable_hard_limit = false        # 无需硬限制（零成本）
 ```
 
-#### 6.2.2 多模型端点配置
+#### 7.2.2 多模型端点配置
 
 ```toml
 # GLM-5 本地端点
@@ -629,10 +851,31 @@ enable_hard_limit = false        # 无需硬限制（零成本）
 base_url = "http://localhost:8001/v1"
 model = "glm-5"
 
+# GLM-5.2 本地端点（1M 上下文）
+[drivers.openai_compatible.glm_52]
+base_url = "http://localhost:8004/v1"
+model = "glm-5.2"
+max_context_tokens = 1_000_000
+dual_thinking_enabled = true
+preserved_thinking_enabled = true
+vision_coordination_enabled = true
+context_degradation_enabled = true
+
 # DeepSeek V4 Flash 本地端点
+# 注意：deepseek_v4_flash 和 deepseek_v4_pro 不是独立的编译器，
+# 而是 DeepSeekV4Compiler 的驱动变体（通过 variant 参数控制）。
 [drivers.openai_compatible.deepseek_v4_flash]
 base_url = "http://localhost:8002/v1"
 model = "deepseek-v4-flash"
+compiler = "deepseek_v4"
+compiler_variant = "flash"
+
+# DeepSeek V4 Pro 本地端点（深度推理场景）
+[drivers.openai_compatible.deepseek_v4_pro]
+base_url = "http://localhost:8002/v1"
+model = "deepseek-v4-pro"
+compiler = "deepseek_v4"
+compiler_variant = "pro"
 
 # MiniMax M3 本地端点
 [drivers.openai_compatible.minimax_m3]
@@ -640,7 +883,9 @@ base_url = "http://localhost:8003/v1"
 model = "minimax-m3"
 ```
 
-#### 6.2.3 本地推理熔断器配置
+> **适配器选择提示：** 以上配置使用 `openai_compatible` 适配器。对于需要原生多模态/桌面操作支持的场景，M3 可使用 `[drivers.minimax_native.minimax_m3]` 配置（`minimax_native` 适配器）；对于需要思考模式（`reasoning_content`）和缓存追踪的场景，GLM-5/5.2 可使用 `[drivers.glm_native.glm_52]` 配置（`glm_native` 适配器）。
+
+#### 7.2.3 本地推理熔断器配置
 
 本地推理的熔断策略与云 API 不同 — 主要关注服务健康而非成本：
 
@@ -657,7 +902,7 @@ avg_window = 5
 stall_threshold = 8             # 本地环境保持默认停滞检测
 ```
 
-#### 6.2.4 上下文窗口配置
+#### 7.2.4 上下文窗口配置
 
 根据本地硬件能力配置上下文窗口：
 
@@ -670,7 +915,7 @@ warn_threshold = 0.75
 compact_threshold = 0.85
 ```
 
-### 6.3 Pipeline 配置
+### 7.3 Pipeline 配置
 
 本地部署的 Pipeline 策略与云部署略有不同：
 
@@ -683,7 +928,7 @@ execute_driver = "openai_compatible.deepseek_v4_flash"
 review_driver = "openai_compatible.glm_5"
 ```
 
-### 6.4 启动与验证
+### 7.4 启动与验证
 
 ```bash
 # 1. 启动所有推理服务
@@ -696,14 +941,18 @@ python -m vllm.entrypoints.openai.api_server --model /data/models/deepseek-v4-fl
 # 终端 3：MiniMax M3
 python -m vllm.entrypoints.openai.api_server --model /data/models/minimax-m3 --device npu --port 8003 ...
 
+# 终端 4：GLM-5.2（1M 上下文，双卡并行）
+python -m vllm.entrypoints.openai.api_server --model /data/models/glm-5.2 --device npu --port 8004 --max-model-len 1000000 --tensor-parallel-size 2 ...
+
 # 2. 等待所有服务就绪
 curl http://localhost:8001/v1/models
 curl http://localhost:8002/v1/models
 curl http://localhost:8003/v1/models
+curl http://localhost:8004/v1/models
 
 # 3. 使用本地配置启动 TerAgent
 cd /path/to/TerAgent
-cp agent.local.toml agent.toml  # 或设置 TERAGENT_CONFIG
+cp examples/agent.local.toml agent.toml  # 或设置 TERAGENT_CONFIG
 python3 -m teragent
 
 # 4. 验证 TerAgent 连接
@@ -717,9 +966,9 @@ for name, driver in config.drivers.items():
 
 ---
 
-## 7. 验证清单
+## 8. 验证清单
 
-### 7.1 环境验证
+### 8.1 环境验证
 
 | # | 验证步骤 | 命令 | 预期输出 |
 |---|---------|------|---------|
@@ -730,7 +979,7 @@ for name, driver in config.drivers.items():
 | 5 | CANN 版本 | `cat /usr/local/Ascend/ascend-toolkit/latest/version.cfg` | 8.0.RCx |
 | 6 | 磁盘空间 | `df -h /data/models` | 充足（模型需要数百 GB） |
 
-### 7.2 推理服务验证
+### 8.2 推理服务验证
 
 | # | 验证步骤 | 命令 | 预期输出 |
 |---|---------|------|---------|
@@ -741,8 +990,12 @@ for name, driver in config.drivers.items():
 | 5 | M3 服务可用 | `curl http://localhost:8003/v1/models` | 返回 minimax-m3 模型信息 |
 | 6 | M3 推理正常 | `curl http://localhost:8003/v1/chat/completions -d '...'` | 返回正常补全结果 |
 | 7 | M3 多模态正常 | 发送 image_url 请求 | 返回图像分析结果 |
+| 8 | GLM-5.2 服务可用 | `curl http://localhost:8004/v1/models` | 返回 glm-5.2 模型信息 |
+| 9 | GLM-5.2 推理正常 | `curl http://localhost:8004/v1/chat/completions -d '...'` | 返回正常补全结果 |
+| 10 | GLM-5.2 1M 上下文 | 发送长上下文请求（>200K tokens） | 正常处理，无 OOM |
+| 11 | GLM-5.2 双思考 | 分别测试 High 和 Max 模式 | Max 模式响应更慢但更深入 |
 
-### 7.3 TerAgent 集成验证
+### 8.3 TerAgent 集成验证
 
 | # | 验证步骤 | 命令/操作 | 预期输出 |
 |---|---------|---------|---------|
@@ -750,12 +1003,16 @@ for name, driver in config.drivers.items():
 | 2 | GLM-5 driver | 创建 provider 并发送请求 | 正常响应 |
 | 3 | V4 Flash driver | 创建 provider 并发送请求 | 正常响应 |
 | 4 | M3 driver | 创建 provider 并发送请求 | 正常响应 |
-| 5 | Pipeline 执行 | 执行 design→plan→execute→review | 四阶段全部正常 |
-| 6 | 路由正确性 | 多模态请求自动路由到 M3 | 路由到 minimax_m3 |
-| 7 | 长程任务 | 启用 GLM-5 长程任务模式 | 检查点保存正常 |
-| 8 | 熔断器 | 模拟连续失败 | 熔断器触发 |
+| 5 | GLM-5.2 driver | 创建 provider 并发送请求 | 正常响应 |
+| 6 | Pipeline 执行 | 执行 design→plan→execute→review | 四阶段全部正常 |
+| 7 | 路由正确性 | 多模态请求自动路由到 M3 | 路由到 minimax_m3 |
+| 8 | 长程任务 | 启用 GLM-5 长程任务模式 | 检查点保存正常 |
+| 9 | 熔断器 | 模拟连续失败 | 熔断器触发 |
+| 10 | GLM-5.2 双思考 | 切换 High/Max 模式 | 模式切换正常 |
+| 11 | GLM-5.2 上下文降级 | 增加上下文至触发降级 | 自动降级到 200K |
+| 12 | 5V-Turbo 协调 | 发送视觉+代码请求 | 视觉协调正常工作 |
 
-### 7.4 性能基准
+### 8.4 性能基准
 
 **目标：** 本地推理性能应达到与云 API 相当的水平（考虑网络延迟优势，实际体验可能更好）。
 
@@ -766,14 +1023,16 @@ for name, driver in config.drivers.items():
 | 1M 上下文加载 | 10-30s | 5-15s | 前缀缓存优化后 |
 | 多模态推理 | 2-5s/图 | 1-3s/图 | 本地视觉编码 |
 | 并发处理 | 受 API 限速 | 受 NPU 显存限制 | 调整 batch size |
+| GLM-5.2 1M 首 token | 500-1000ms | 300-600ms | 1M 上下文更长 |
+| GLM-5.2 Max 思考延迟 | 5-15s | 3-10s | 最大推理深度延迟 |
 
 > **注意：** 以上性能指标为预估值，实际性能取决于具体的 NPU 型号、显存大小和推理框架优化程度。建议在部署后使用 `teragent.benchmark` 进行基准测试。
 
 ---
 
-## 8. 性能调优
+## 9. 性能调优
 
-### 8.1 GLM-5 调优
+### 9.1 GLM-5 调优
 
 ```bash
 # 1. KV Cache 优化
@@ -790,7 +1049,7 @@ for name, driver in config.drivers.items():
 --gpu-memory-utilization 0.90   # 保留 10% 给系统开销
 ```
 
-### 8.2 DeepSeek V4 调优
+### 9.2 DeepSeek V4 调优
 
 ```bash
 # 1. 1M 上下文优化
@@ -812,7 +1071,7 @@ for name, driver in config.drivers.items():
 # - 生成预热请求初始化缓存
 ```
 
-### 8.3 MiniMax M3 调优
+### 9.3 MiniMax M3 调优
 
 ```bash
 # 1. 多模态性能优化
@@ -828,7 +1087,50 @@ for name, driver in config.drivers.items():
 --pipeline-parallel-size 1              # 通常不需要流水线并行
 ```
 
-### 8.4 系统级调优
+### 9.4 GLM-5.2 调优
+
+```bash
+# 1. 1M 上下文 KV Cache 优化
+--max-model-len 1000000                 # 1M 上下文
+--enable-prefix-caching                 # 前缀缓存（1M 场景必需）
+--kv-cache-dtype auto                   # 自动选择 KV cache 数据类型
+--tensor-parallel-size 2                # 双卡并行分散 KV cache
+--swap-space 16                         # 16GB CPU swap 防止 OOM
+--max-num-seqs 2                        # 减少并发，为 1M 腾出显存
+
+# 2. 双思考模式优化
+# High 模式（默认）：平衡速度和深度
+# Max 模式：最大推理深度，建议配合 timeout=300 使用
+# TerAgent 的 GLM52Compiler 会根据请求 meta 自动切换思考模式
+
+# 3. 上下文降级配置
+# 启用 context_degradation_enabled = true
+# 当 NPU 内存 >90% 时自动降级到 200K
+# 当 NPU 内存 <70% 时自动恢复到 1M
+
+# 4. PreservedThinking 优化
+# 限制保持的推理痕迹数量（默认 10 条）
+# 定期清理旧的 PreservedThinking 痕迹
+# 仅在编码任务中启用，分析任务可关闭以节省上下文
+
+# 5. 5V-Turbo 视觉协调优化
+# 确保 GLM-5V-Turbo 服务可用
+# 配置视觉协调超时：multimodal_timeout=600.0
+# 设置 5V-Turbo 熔断器：max_consecutive_failures=5
+```
+
+**GLM-5.2 调优参数汇总：**
+
+| 参数 | 1M 上下文 | 200K 降级模式 | 说明 |
+|------|----------|-------------|------|
+| `max-model-len` | 1000000 | 200000 | 根据模式调整 |
+| `tensor-parallel-size` | 2 | 1 | 1M 需双卡，200K 单卡 |
+| `max-num-seqs` | 2 | 4 | 1M 减少并发 |
+| `gpu-memory-utilization` | 0.90 | 0.90 | 保持一致 |
+| `swap-space` | 16 | 8 | 1M 需更大 swap |
+| `enable-prefix-caching` | ✅ | ✅ | 两种模式都建议开启 |
+
+### 9.5 系统级调优
 
 ```bash
 # 1. NPU 频率设置（性能模式）
@@ -848,9 +1150,9 @@ export OP_PROTO_LIB=/usr/local/Ascend/ascend-toolkit/latest/op_impl/built-in/op_
 
 ---
 
-## 9. 常见问题与解决方案
+## 10. 常见问题与解决方案
 
-### 9.1 CANN 驱动问题
+### 10.1 CANN 驱动问题
 
 #### Q: `npu-smi info` 无法识别设备
 
@@ -877,7 +1179,7 @@ echo $LD_LIBRARY_PATH
 python3 -c "import sys; print([p for p in sys.path if 'Ascend' in p])"
 ```
 
-### 9.2 推理服务问题
+### 10.2 推理服务问题
 
 #### Q: vLLM-Ascend 启动 OOM
 
@@ -918,7 +1220,7 @@ print(f'Size: {img.size}, Format: {img.format}')
 --limit-mm-per-prompt image=5,video=1  # 降低多模态内容限制
 ```
 
-### 9.3 TerAgent 集成问题
+### 10.3 TerAgent 集成问题
 
 #### Q: TerAgent 无法连接本地推理服务
 
@@ -962,7 +1264,7 @@ df -h .agent/
 curl http://localhost:8001/health
 ```
 
-### 9.4 性能问题
+### 10.4 性能问题
 
 #### Q: 推理速度比云 API 慢
 
@@ -998,9 +1300,9 @@ iostat -x 1 10
 
 ---
 
-## 10. 附录
+## 11. 附录
 
-### 10.1 参考文档
+### 11.1 参考文档
 
 | 文档 | 链接 |
 |------|------|
@@ -1010,34 +1312,39 @@ iostat -x 1 10
 | MindIE 推理引擎 | https://www.hiascend.com/software/mindie |
 | openEuler 操作系统 | https://www.openeuler.org/ |
 | GLM-5 模型仓库 | https://modelscope.cn/models/ZhipuAI/glm-5 |
+| GLM-5.2 模型仓库 | https://modelscope.cn/models/ZhipuAI/glm-5.2 |
 | DeepSeek V4 模型仓库 | https://modelscope.cn/models/deepseek-ai/deepseek-v4 |
 | MiniMax M3 模型仓库 | https://modelscope.cn/models/MiniMaxAI/minimax-m3 |
 
-### 10.2 模型规格汇总
+### 11.2 模型规格汇总
 
-| 参数 | GLM-5 | DeepSeek V4 Flash | DeepSeek V4 Pro | MiniMax M3 |
-|------|---------|-------------------|-----------------|------------|
-| 上下文窗口 | 200K | 1M | 1M | 1M |
-| 最大输出 | 128K | 384K | 384K | 384K |
-| 多模态 | ❌ | ❌ | ❌ | ✅ |
-| 桌面操作 | ❌ | ❌ | ❌ | ✅ |
-| 长程任务 | ✅ (8h) | ❌ | ❌ | ❌ |
-| 思考模式 | deep/quick/auto | auto/quick | deep | - |
-| 缓存感知 | ❌ | ✅ | ✅ | ✅ (MSA) |
-| 推荐芯片 | Ascend 910B | Ascend 950PR | Ascend 950PR | Ascend 910B |
-| 推荐端口 | 8001 | 8002 | 8005 | 8003 |
+| 参数 | GLM-5 | GLM-5.2 | DeepSeek V4 Flash | DeepSeek V4 Pro | MiniMax M3 |
+|------|---------|---------|-------------------|-----------------|------------|
+| 上下文窗口 | 200K | 1M | 1M | 1M | 1M |
+| 最大输出 | 128K | 128K | 384K | 384K | 384K |
+| 多模态 | ❌ | ❌（通过 5V） | ❌ | ❌ | ✅ |
+| 桌面操作 | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 长程任务 | ✅ (8h) | ✅ (8h+) | ❌ | ❌ | ❌ |
+| 思考模式 | deep | High/Max | auto/quick | deep | - |
+| 缓存感知 | ❌ | ✅ | ✅ | ✅ | ✅ (MSA) |
+| PreservedThinking | ❌ | ✅ | ❌ | ❌ | ❌ |
+| 5V-Turbo 协调 | ❌ | ✅ | ❌ | ❌ | ❌ |
+| 上下文降级 | ❌ | ✅ (1M→200K) | ❌ | ❌ | ❌ |
+| 推荐芯片 | Ascend 910B | Ascend 910B ×2 | Ascend 950PR | Ascend 950PR | Ascend 910B |
+| 推荐端口 | 8001 | 8004 | 8002 | 8005 | 8003 |
 
-### 10.3 端口分配
+### 11.3 端口分配
 
 | 端口 | 服务 | 说明 |
 |------|------|------|
 | 8001 | GLM-5 推理 | OpenAI 兼容 API |
 | 8002 | DeepSeek V4 Flash 推理 | OpenAI 兼容 API |
 | 8003 | MiniMax M3 推理 | OpenAI 兼容 API |
+| 8004 | GLM-5.2 推理 | OpenAI 兼容 API（1M 上下文） |
 | 8005 | DeepSeek V4 Pro 推理 | OpenAI 兼容 API（可选） |
 | 8010 | 桌面操作 API | M3 桌面操作辅助服务 |
 
-### 10.4 硬件验证限制声明
+### 11.4 硬件验证限制声明
 
 > **重要说明：** 本部署指南基于华为昇腾官方文档和模型开源社区信息编写，旨在为 DevOps 工程师提供完整的部署参考。由于当前环境无实际 Ascend 910B/950PR 硬件，以下内容**未经实际硬件验证**：
 >

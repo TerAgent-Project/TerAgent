@@ -5,6 +5,13 @@ from typing import Any
 
 import lancedb
 
+__all__ = [
+    "MAX_CODE_CHARS",
+    "MAX_CODE_TOKENS",
+    "TABLE_NAME",
+    "VectorIndexer",
+]
+
 from teragent.utils.token_counter import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -100,7 +107,7 @@ class VectorIndexer:
                 {
                     "vector": embeddings[0],
                     "symbol": symbol_name,
-                    "file": file_path,
+                    "file": file_path.replace(os.sep, "/"),  # 统一使用正斜杠，确保跨平台一致性
                     "code": code,
                 }
             ]

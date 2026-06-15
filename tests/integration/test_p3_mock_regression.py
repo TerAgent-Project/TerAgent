@@ -80,6 +80,18 @@ def _create_test_router() -> ModelRouter:
         )
     except Exception:
         pass
+    try:
+        providers["openai_compatible.glm_52"] = _create_mock_provider(
+            "glm_52", "glm-5.2"
+        )
+    except Exception:
+        pass
+    try:
+        providers["openai_compatible.glm_5v_turbo"] = _create_mock_provider(
+            "glm_5v_turbo", "glm-5v-turbo"
+        )
+    except Exception:
+        pass
 
     return ModelRouter(available_providers=providers)
 
@@ -98,8 +110,8 @@ class TestP3_1_ModelRouter:
         """Default routing table maps each intent to the correct driver"""
         rt = RoutingTable()
         assert rt.get_intent_driver("design") == "openai_compatible.deepseek_v4_pro"
-        assert rt.get_intent_driver("plan") == "openai_compatible.glm_5"
-        assert rt.get_intent_driver("execute") == "openai_compatible.glm_5"
+        assert rt.get_intent_driver("plan") == "openai_compatible.glm_52"
+        assert rt.get_intent_driver("execute") == "openai_compatible.glm_52"
         assert rt.get_intent_driver("review") == "openai_compatible.deepseek_v4_pro"
         assert rt.get_intent_driver("chat") == "openai_compatible.deepseek_v4_flash"
 
@@ -114,23 +126,23 @@ class TestP3_1_ModelRouter:
         assert decision.reason == RoutingReason.INTENT
 
     def test_intent_routing_plan(self):
-        """Plan intent → GLM-5"""
+        """Plan intent → GLM-5.2"""
         request = TAPRequest(
             meta={"task_id": "2", "intent": "plan"},
             instruction="Create an execution plan",
         )
         decision = self.router.route(request)
-        assert decision.selected_driver == "openai_compatible.glm_5"
+        assert decision.selected_driver == "openai_compatible.glm_52"
         assert decision.reason == RoutingReason.INTENT
 
     def test_intent_routing_execute(self):
-        """Execute intent → GLM-5"""
+        """Execute intent → GLM-5.2"""
         request = TAPRequest(
             meta={"task_id": "3", "intent": "execute"},
             instruction="Write the code",
         )
         decision = self.router.route(request)
-        assert decision.selected_driver == "openai_compatible.glm_5"
+        assert decision.selected_driver == "openai_compatible.glm_52"
 
     def test_intent_routing_review(self):
         """Review intent → V4-Pro"""
@@ -189,7 +201,7 @@ class TestP3_1_ModelRouter:
         assert decision.reason == RoutingReason.DESKTOP_OVERRIDE
 
     def test_context_length_override(self):
-        """Context > 200K → V4/M3 (excludes GLM-5)"""
+        """Context > 200K → GLM-5.2 (1M context, first candidate)"""
         # Create request with large context that exceeds 200K tokens
         request = TAPRequest(
             meta={"task_id": "9", "intent": "plan"},
@@ -197,19 +209,19 @@ class TestP3_1_ModelRouter:
             context={"design": "x" * 1_000_000},  # ~250K tokens
         )
         decision = self.router.route(request)
-        # Should NOT be GLM-5 (200K limit)
-        assert "glm_5" not in decision.selected_driver
+        # GLM-5.2 is first candidate with 1M context; glm_5 (200K limit) is excluded
+        assert "glm_52" in decision.selected_driver
         assert decision.reason == RoutingReason.CONTEXT_LENGTH_OVERRIDE
 
     def test_long_horizon_override(self):
-        """Long-horizon task → GLM-5"""
+        """Long-horizon task → GLM-5.2"""
         request = TAPRequest(
             meta={"task_id": "10", "intent": "chat"},
             instruction="Run this autonomous task",
             long_horizon=LongHorizonConfig(max_duration_hours=4.0),
         )
         decision = self.router.route(request)
-        assert decision.selected_driver == "openai_compatible.glm_5"
+        assert decision.selected_driver == "openai_compatible.glm_52"
         assert decision.reason == RoutingReason.LONG_HORIZON_OVERRIDE
 
     def test_routing_priority(self):
@@ -290,10 +302,10 @@ class TestP3_1_Degradation:
         assert decision.selected_driver == "openai_compatible.deepseek_v4_flash"
         assert decision.reason == RoutingReason.DEGRADATION
 
-    def test_degradation_glm_to_flash(self):
-        """GLM-5 unavailable → degrades to V4-Flash"""
+    def test_degradation_glm52_to_glm5(self):
+        """GLM-5.2 unavailable → degrades to GLM-5"""
         self.router.update_circuit_breaker_state(
-            "openai_compatible.glm_5",
+            "openai_compatible.glm_52",
             BreakerState(
                 name="open", consecutive_failures=3, total_failures=5,
                 total_successes=30, last_error="rate_limit",
@@ -305,7 +317,7 @@ class TestP3_1_Degradation:
             instruction="Plan",
         )
         decision = self.router.route(request)
-        assert decision.selected_driver == "openai_compatible.deepseek_v4_flash"
+        assert decision.selected_driver == "openai_compatible.glm_5"
         assert decision.reason == RoutingReason.DEGRADATION
 
     def test_degradation_m3_to_v4_pro(self):
@@ -335,6 +347,7 @@ class TestP3_1_Degradation:
         for driver in [
             "openai_compatible.deepseek_v4_pro",
             "openai_compatible.deepseek_v4_flash",
+            "openai_compatible.glm_52",
             "openai_compatible.glm_5",
             "openai_compatible.minimax_m3",
         ]:
@@ -409,11 +422,12 @@ class TestP3_2_PipelineManager:
         self.pm = PipelineManager()
 
     def test_builtin_profiles(self):
-        """Built-in profiles are registered: default, budget, multimodal"""
+        """Built-in profiles are registered: default, budget, multimodal, deep_thinking"""
         profiles = self.pm.list_profiles()
         assert "default" in profiles
         assert "budget" in profiles
         assert "multimodal" in profiles
+        assert "deep_thinking" in profiles
 
     def test_default_profile_active(self):
         """Default profile is active on init"""
@@ -523,7 +537,7 @@ class TestP3_2_PipelineRouting:
             long_horizon=LongHorizonConfig(max_duration_hours=8.0),
         )
         decision = self.router.route_for_stage("execute", request)
-        assert decision.selected_driver == "openai_compatible.glm_5"
+        assert decision.selected_driver == "openai_compatible.glm_52"
         assert decision.reason == RoutingReason.LONG_HORIZON_OVERRIDE
 
     def test_switch_profile_and_route(self):
@@ -549,8 +563,8 @@ class TestP3_2_PipelineRouting:
             "execution": {
                 "pipeline": {
                     "design_driver": "openai_compatible.deepseek_v4_pro",
-                    "plan_driver": "openai_compatible.glm_5",
-                    "execute_driver": "openai_compatible.glm_5",
+                    "plan_driver": "openai_compatible.glm_52",
+                    "execute_driver": "openai_compatible.glm_52",
                     "review_driver": "openai_compatible.deepseek_v4_pro",
                     "profiles": {
                         "test": {
@@ -652,7 +666,7 @@ class TestP3_3_CostTracker:
         for intent, driver, cost in [
             ("design", "openai_compatible.deepseek_v4_pro", 0.05),
             ("execute", "openai_compatible.deepseek_v4_flash", 0.02),
-            ("plan", "openai_compatible.glm_5", 0.03),
+            ("plan", "openai_compatible.glm_52", 0.03),
         ]:
             self.tracker.record(CostRecord(
                 driver_name=driver, intent=intent, cost_cny=cost,
@@ -815,8 +829,8 @@ class TestP3_5_EndToEnd:
 
         # Verify each stage uses the expected model
         assert "deepseek_v4" in decisions[0][1]  # design → V4
-        assert "glm_5" in decisions[1][1]         # plan → GLM-5
-        assert "glm_5" in decisions[2][1]         # execute → GLM-5
+        assert "glm_52" in decisions[1][1]        # plan → GLM-5.2
+        assert "glm_52" in decisions[2][1]        # execute → GLM-5.2
         assert "deepseek_v4" in decisions[3][1]    # review → V4
 
     def test_multimodal_e2e_flow(self):
@@ -845,7 +859,7 @@ class TestP3_5_EndToEnd:
         assert compiled.mode == "messages"
 
     def test_long_horizon_e2e_flow(self):
-        """Long-horizon end-to-end: long task → GLM-5 routing → compilation"""
+        """Long-horizon end-to-end: long task → GLM-5.2 routing → compilation"""
         router = _create_test_router()
 
         request = TAPRequest(
@@ -859,9 +873,9 @@ class TestP3_5_EndToEnd:
         )
 
         decision = router.route(request)
-        assert decision.selected_driver == "openai_compatible.glm_5"
+        assert decision.selected_driver == "openai_compatible.glm_52"
 
-        # Verify the GLM-5 compiler handles long_horizon
+        # Verify the GLM-5.2 compiler handles long_horizon
         provider = router.get_provider(decision.selected_driver)
         compiled = provider.compiler.compile(request)
         assert compiled.mode == "messages"
@@ -951,7 +965,7 @@ class TestP3_5_EndToEnd:
             instruction="Write code",
         )
 
-        # Default: execute → GLM-5
+        # Default: execute → GLM-5.2
         router.pipeline_manager.set_active_profile("default")
         d1 = router.route_for_stage("execute", request)
 
@@ -1012,7 +1026,7 @@ class TestP3_5_EndToEnd:
         """Regression: all 8 compilers still compile successfully with router"""
         _router = _create_test_router()
 
-        for compiler_name in ["deepseek_v4", "glm_5", "minimax_m3", "default", "glm", "deepseek"]:
+        for compiler_name in ["deepseek_v4", "glm_5", "glm_52", "glm_5v_turbo", "minimax_m3", "default", "glm", "deepseek"]:
             compiler_cls = TAPCompilerRegistry.get(compiler_name)
             if compiler_cls is None:
                 continue
@@ -1051,7 +1065,7 @@ class TestP3_5_EndToEnd:
         config = {
             "routing": {
                 "multimodal_driver": "openai_compatible.minimax_m3",
-                "long_horizon_driver": "openai_compatible.glm_5",
+                "long_horizon_driver": "openai_compatible.glm_52",
                 "monthly_budget": {
                     "limit_cny": 500.0,
                     "warning_threshold": 0.8,
@@ -1061,15 +1075,15 @@ class TestP3_5_EndToEnd:
             "execution": {
                 "pipeline": {
                     "design_driver": "openai_compatible.deepseek_v4_pro",
-                    "plan_driver": "openai_compatible.glm_5",
-                    "execute_driver": "openai_compatible.glm_5",
+                    "plan_driver": "openai_compatible.glm_52",
+                    "execute_driver": "openai_compatible.glm_52",
                     "review_driver": "openai_compatible.deepseek_v4_pro",
                 },
             },
         }
         router = ModelRouter.from_config(config)
         assert router.routing_table.multimodal_driver == "openai_compatible.minimax_m3"
-        assert router.routing_table.long_horizon_driver == "openai_compatible.glm_5"
+        assert router.routing_table.long_horizon_driver == "openai_compatible.glm_52"
         assert router.monthly_budget_remaining > 0
 
     def test_step_budget_unchanged(self):

@@ -11,6 +11,10 @@
 import logging
 import re
 
+__all__ = [
+    "extract_files_from_response",
+]
+
 logger = logging.getLogger(__name__)
 
 # v1.0.4: Extended XML patterns — supports path/name attributes, quoted/unquoted, triple-backtick+path
@@ -171,17 +175,13 @@ def extract_files_from_response(content: str | None, task_id: str = "unknown") -
         return files
 
     elif filename_hints:
-        # Fewer hints than code blocks, smart matching
+        # Fewer hints than code blocks, match hints in order
         hint_idx = 0
         for i, code in enumerate(md_matches):
-            matched = False
-            while hint_idx < len(filename_hints):
+            if hint_idx < len(filename_hints):
                 files[filename_hints[hint_idx]] = code.strip()
                 hint_idx += 1
-                matched = True
-                break
-
-            if not matched:
+            else:
                 files[_infer_filename_from_code(code, i, task_id)] = code.strip()
         return files
 

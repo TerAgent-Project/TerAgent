@@ -12,6 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+__all__ = [
+    "LongHorizonResult",
+    "PhaseResult",
+    "SubGoal",
+]
+
 
 @dataclass
 class SubGoal:

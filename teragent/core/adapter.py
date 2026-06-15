@@ -15,6 +15,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
+__all__ = [
+    "TAPAdapter",
+    "TAPAdapterRegistry",
+]
+
 if TYPE_CHECKING:
     from teragent.core.tap import CompiledPrompt, TAPResponse
 
@@ -84,9 +89,13 @@ class TAPAdapter(ABC):
 
 
 class TAPAdapterRegistry:
-    """Adapter registry — maps adapter names to Adapter classes"""
+    """Adapter registry — maps adapter names to Adapter classes
 
-    _adapters: dict[str, type[TAPAdapter]] = {}
+    Note: _adapters is NOT declared as a class-level mutable default to avoid
+    shared-state bugs across subclasses. It is lazily created per-class via
+    _get_registry(), which checks cls.__dict__ to ensure each subclass gets
+    its own independent registry.
+    """
 
     @classmethod
     def _get_registry(cls) -> dict[str, type[TAPAdapter]]:

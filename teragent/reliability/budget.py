@@ -18,6 +18,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+__all__ = [
+    "CostRecord",
+    "CrossModelCostTracker",
+    "DEFAULT_MAX_STEPS",
+    "MonthlyBudgetConfig",
+    "StepBudget",
+]
+
 # Module-level default — replaces the former MAX_TOOL_STEPS import.
 # The value 30 matches the original AgentLoopConfig.max_tool_steps default.
 DEFAULT_MAX_STEPS: int = 30
@@ -140,7 +148,7 @@ class MonthlyBudgetConfig:
     Attributes:
         limit_cny: Monthly budget limit in CNY (0 = no limit)
         warning_threshold: Fraction at which to emit warning (0.8 = 80%)
-        critical_threshold: Fraction at which to auto-downgrade (1.0 = at 100%)
+        critical_threshold: Fraction at which to auto-downgrade (0.95 = at 95%)
         auto_downgrade_driver: Driver to downgrade to when budget exhausted
             (default: V4-Flash for maximum cost savings)
         notify_on_warning: Whether to log/emitting events on budget warning
@@ -148,7 +156,7 @@ class MonthlyBudgetConfig:
 
     limit_cny: float = 0.0
     warning_threshold: float = 0.8
-    critical_threshold: float = 1.0
+    critical_threshold: float = 0.95
     auto_downgrade_driver: str = "openai_compatible.deepseek_v4_flash"
     notify_on_warning: bool = True
 
@@ -220,31 +228,32 @@ class CrossModelCostTracker:
                 "downgrade_driver": str,
             }
         """
+        # 修复 H13: 将整个方法体包裹在锁内，确保 check_budget 和标志位操作的原子性
         with self._lock:
             self._records.append(record)
             self._total_cost_cny += record.cost_cny
             self._total_saved_cny += record.cost_saved_cny
 
-        budget_status = self.check_budget()
+            budget_status = self.check_budget()
 
-        # Emit budget events
-        if budget_status["level"] == "warning" and not self._warning_emitted:
-            self._warning_emitted = True
-            logger.warning(
-                f"Monthly budget warning: ¥{self._total_cost_cny:.2f} / "
-                f"¥{self._budget_config.limit_cny:.2f} "
-                f"({budget_status['utilization']:.1%})"
-            )
-        elif budget_status["level"] in ("critical", "exhausted") and not self._critical_emitted:
-            self._critical_emitted = True
-            logger.error(
-                f"Monthly budget critical: ¥{self._total_cost_cny:.2f} / "
-                f"¥{self._budget_config.limit_cny:.2f} "
-                f"({budget_status['utilization']:.1%}). "
-                f"Auto-downgrade to {self._budget_config.auto_downgrade_driver}"
-            )
+            # Emit budget events
+            if budget_status["level"] == "warning" and not self._warning_emitted:
+                self._warning_emitted = True
+                logger.warning(
+                    f"Monthly budget warning: ¥{self._total_cost_cny:.2f} / "
+                    f"¥{self._budget_config.limit_cny:.2f} "
+                    f"({budget_status['utilization']:.1%})"
+                )
+            elif budget_status["level"] in ("critical", "exhausted") and not self._critical_emitted:
+                self._critical_emitted = True
+                logger.error(
+                    f"Monthly budget critical: ¥{self._total_cost_cny:.2f} / "
+                    f"¥{self._budget_config.limit_cny:.2f} "
+                    f"({budget_status['utilization']:.1%}). "
+                    f"Auto-downgrade to {self._budget_config.auto_downgrade_driver}"
+                )
 
-        return budget_status
+            return budget_status
 
     def record_from_tap_response(
         self,
@@ -435,7 +444,7 @@ class CrossModelCostTracker:
         groups: dict[str, list[CostRecord]] = defaultdict(list)
         for r in records:
             if group_by == "model":
-                key = r.driver_name
+                key = r.model
             elif group_by == "intent":
                 key = r.intent
             elif group_by == "date":

@@ -2,6 +2,10 @@
 
 import logging
 
+__all__ = [
+    "strip_code_block",
+]
+
 logger = logging.getLogger(__name__)
 
 
