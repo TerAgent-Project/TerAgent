@@ -19,4 +19,4 @@ Choose your language / 选择语言：
 
 ---
 
-**Project**: [GitHub](https://github.com/teragent/teragent) | **License**: Apache License Version 2.0 | **Version**: 0.1.2
+**Project**: [GitHub](https://github.com/teragent/teragent) | **License**: Apache License Version 2.0 | **Version**: 0.1.3

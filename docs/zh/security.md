@@ -308,7 +308,7 @@ findings = audit_env_file(".env")
 
 ### Windows 安全注意事项
 
-TerAgent 的安全沙箱最初为 Unix 系统设计。从 v0.1.2 起，已添加全面的 Windows 支持：
+TerAgent 的安全沙箱最初为 Unix 系统设计。从 v0.1.3 起，已添加全面的 Windows 支持：
 
 1. **命令安全**：16 种 Windows 专属危险命令模式现已被拦截（见上方第 3 层）
 2. **系统路径保护**：Windows 系统目录已受写入重定向保护（见上方第 4 层）

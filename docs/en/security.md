@@ -308,7 +308,7 @@ findings = audit_env_file(".env")
 
 ### Windows Security Considerations
 
-TerAgent's security sandbox was originally designed for Unix systems. Starting from v0.1.2, comprehensive Windows support has been added:
+TerAgent's security sandbox was originally designed for Unix systems. Starting from v0.1.3, comprehensive Windows support has been added:
 
 1. **Command Safety**: 16 Windows-specific dangerous command patterns are now blocked (see Layer 3 above)
 2. **System Path Protection**: Windows system directories are protected from write redirects (see Layer 4 above)

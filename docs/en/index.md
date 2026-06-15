@@ -32,4 +32,4 @@ Welcome to the TerAgent documentation. TerAgent is a Python library for building
 
 - **Project**: [GitHub](https://github.com/teragent/teragent)
 - **License**: Apache License Version 2.0
-- **Version**: 0.1.2
+- **Version**: 0.1.3
