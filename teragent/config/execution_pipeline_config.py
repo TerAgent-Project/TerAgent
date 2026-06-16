@@ -12,7 +12,7 @@ class ExecutionPipelineConfig:
     """Execution pipeline driver assignments.
 
     Maps to [execution.pipeline] section in agent.toml.
-    Supports both new format (*_driver) and old format (*_model).
+    Uses *_driver keys for driver assignment.
     """
     design_driver: str = ""
     plan_driver: str = ""
@@ -23,23 +23,15 @@ class ExecutionPipelineConfig:
     def from_dict(cls, data: dict) -> ExecutionPipelineConfig:
         """Create ExecutionPipelineConfig from a raw TOML dict.
 
-        Supports both new format (*_driver) and old format (*_model) keys.
-
         Args:
             data: The [execution.pipeline] section dict from agent.toml
 
         Returns:
             Typed ExecutionPipelineConfig instance
         """
-        # New format keys (preferred)
-        design = data.get("design_driver", "") or data.get("design_model", "")
-        plan = data.get("plan_driver", "") or data.get("plan_model", "")
-        execute = data.get("execute_driver", "") or data.get("execute_model", "")
-        review = data.get("review_driver", "") or data.get("review_model", "")
-
         return cls(
-            design_driver=design,
-            plan_driver=plan,
-            execute_driver=execute,
-            review_driver=review,
+            design_driver=data.get("design_driver", ""),
+            plan_driver=data.get("plan_driver", ""),
+            execute_driver=data.get("execute_driver", ""),
+            review_driver=data.get("review_driver", ""),
         )

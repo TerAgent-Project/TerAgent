@@ -420,14 +420,16 @@ GLM-5.2 can coordinate with GLM-5V-Turbo for vision→code→verify cycles, comb
 
 ### Setting Up Vision Coordination
 
+> **Note:** `vision_coordination_enabled` and `preserved_thinking_enabled` are compiler-level kwargs for `create_provider()`, not TOML driver fields. In TOML, use `multimodal_enabled = true` to enable multimodal support.
+
 ```toml
 [drivers.openai_compatible.glm_52]
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 api_key_env = "GLM_API_KEY"
 model = "glm-5.2"
 compiler = "glm_52"
-vision_coordination_enabled = true
-preserved_thinking_enabled = true    # Recommended for coding from mockups
+multimodal_enabled = true               # Enable multimodal (vision coordination)
+# Note: preserved_thinking_enabled is a create_provider() kwarg, not a TOML field
 ```
 
 ### Vision→Code→Verify Workflow
@@ -440,8 +442,8 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
-    preserved_thinking_enabled=True,
+    vision_coordination_enabled=True,  # compiler-level kwarg
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
 
 # Step 1: Analyze a UI mockup and generate code
@@ -493,7 +495,7 @@ glm52_provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
 
 # Step 1: M3 analyzes the screenshot

@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from teragent.context.retention_tracker import LongContextRetentionTracker
 from teragent.core.compiler import TAPCompiler, TAPCompilerRegistry
@@ -907,51 +907,26 @@ class GLM52Compiler(GLM5Compiler):
         self._retention_tracker.reset_downgrade()
         logger.info("GLM52Compiler 降级状态已重置，恢复 1M 模式")
 
-    # ----- P2-11: 与 GLM-5V-Turbo 协同集成 -----
+    # ----- P2-11: 与 GLM-5V-Turbo 协同集成 (deprecated — migrated to orchestration) -----
 
     def create_coordinated_workflow(
         self,
         vision_provider: "ModelProvider | None" = None,
         coding_provider: "ModelProvider | None" = None,
-        config: "CoordinationConfig | None" = None,
-    ) -> "GLM52VCoordinatedWorkflow":
+        config: "Any | None" = None,
+    ) -> "Any":
         """创建 GLM-5V-Turbo + GLM-5.2 协同工作流
 
-        便捷方法，用于从 GLM52Compiler 创建协同工作流实例。
+        .. deprecated::
+            teragent.coordination is removed. Use teragent.orchestration
+            for multi-agent coordination instead.
 
-        Args:
-            vision_provider: GLM-5V-Turbo 的 ModelProvider
-            coding_provider: GLM-5.2 的 ModelProvider
-            config: 协同配置
-
-        Returns:
-            GLM52VCoordinatedWorkflow 实例
-
-        Example::
-
-            compiler = GLM52Compiler()
-            workflow = compiler.create_coordinated_workflow(
-                vision_provider=vision_provider,
-                coding_provider=coding_provider,
-                config=CoordinationConfig(mode="verify"),
-            )
-            result = await workflow.execute(tap_request)
+        Raises:
+            NotImplementedError: Always — coordination has been migrated to orchestration.
         """
-        from teragent.coordination.glm5v_coordinator import (
-            GLM52VCoordinatedWorkflow,
-            CoordinationConfig,
-        )
-
-        if config is None:
-            config = CoordinationConfig(
-                coding_compiler="glm_52",
-                coding_model="glm-5.2",
-            )
-
-        return GLM52VCoordinatedWorkflow(
-            vision_provider=vision_provider,
-            coding_provider=coding_provider,
-            config=config,
+        raise NotImplementedError(
+            "GLM52Compiler.create_coordinated_workflow() is deprecated. "
+            "Use teragent.orchestration.Orchestrator for multi-agent coordination."
         )
 
     def compile_with_visual_context(

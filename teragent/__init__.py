@@ -169,17 +169,6 @@ from teragent.context.memory import (
 )
 from teragent.context.microcompactor import Microcompactor
 
-# ============================================================================
-# Coordination
-# ============================================================================
-from teragent.coordination.message_bus import AgentMessage, AgentMessageBus
-from teragent.coordination.sub_agent_manager import (
-    AgentMode,
-    SubAgentInfo,
-    SubAgentManager,
-    SubAgentStatus,
-)
-
 # Adapter ABC + Registry
 from teragent.core.adapter import TAPAdapter, TAPAdapterRegistry
 
@@ -440,6 +429,31 @@ from teragent.tools.orchestrator import MAX_CONCURRENT_TOOLS, ToolOrchestrator
 from teragent.tools.registry import ToolRegistry
 
 # ============================================================================
+# Orchestration — 多Agent编排 (Phase 1 W1)
+# ============================================================================
+from teragent.orchestration.agent import Agent
+from teragent.orchestration.handoff import Handoff, HandoffInputFilter, HandoffTool
+from teragent.orchestration.orchestrator import (
+    OrchestrationConfig,
+    OrchestrationMode,
+    Orchestrator,
+)
+from teragent.orchestration.patterns.base import OrchestrationResult
+from teragent.orchestration.shared_state import SharedState
+from teragent.orchestration.run_context import RunContext
+from teragent.orchestration.cancellation import CancellationToken
+from teragent.orchestration.agent_hooks import AgentHooks
+
+# ============================================================================
+# Tool decorator (Phase 1 W1)
+# ============================================================================
+from teragent.tools.decorator import tool, DecoratorTool
+from teragent.tools.agent_tool import AgentTool
+
+# Phase 1 W4: Built-in tools
+from teragent.tools.builtin import all_builtin_tools
+
+# ============================================================================
 # Prompt selection helper
 # ============================================================================
 
@@ -695,7 +709,7 @@ def create_provider(
 # Version
 # ============================================================================
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 
 
 # ============================================================================
@@ -891,13 +905,6 @@ __all__ = [
     "RateLimitHandler",
     # EventBus
     "EventBus",
-    # Coordination
-    "AgentMessageBus",
-    "AgentMessage",
-    "SubAgentManager",
-    "AgentMode",
-    "SubAgentStatus",
-    "SubAgentInfo",
     # Intent
     "IntentClassifier",
     "IntentType",
@@ -934,4 +941,16 @@ __all__ = [
     "MAX_CONCURRENT_TOOLS",
     # AgentLoop — central orchestration
     "AgentLoop",
+    # Orchestration — 多Agent编排
+    "Agent",
+    "Handoff", "HandoffInputFilter", "HandoffTool",
+    "Orchestrator", "OrchestrationConfig", "OrchestrationMode", "OrchestrationResult",
+    "SharedState",
+    "RunContext",
+    "CancellationToken",
+    "AgentHooks",
+    # Tool decorator
+    "tool", "DecoratorTool", "AgentTool",
+    # Phase 1 W4: Built-in tools
+    "all_builtin_tools",
 ]

@@ -282,7 +282,6 @@ max_output_tokens = 384_000
 multimodal_enabled = true               # Enable multimodal (image+video)
 desktop_enabled = true                  # Enable desktop operations
 msa_efficient = true                    # MSA full-text injection mode
-group_id = ""                           # Optional MiniMax Group ID
 ```
 
 | Field | Type | Default | Description |
@@ -294,7 +293,6 @@ group_id = ""                           # Optional MiniMax Group ID
 | `multimodal_enabled` | bool | `false` | Enable native multimodal support |
 | `desktop_enabled` | bool | `false` | Enable desktop operation support |
 | `msa_efficient` | bool | `false` | Enable MSA full-text injection |
-| `group_id` | string | `""` | MiniMax Group ID (required for some endpoints) |
 
 ### GLM-5 Driver
 
@@ -328,11 +326,11 @@ compiler = "glm_52"
 max_context_tokens = 1_000_000          # GLM-5.2 supports 1M context
 max_output_tokens = 128_000
 thinking_mode = "high"                  # Default: "high" (vs "max" for deep reasoning)
-dual_thinking_enabled = true            # Enable High/Max dual thinking mode
-preserved_thinking_enabled = true       # Enable PreservedThinking for coding plans
-vision_coordination_enabled = true      # Enable 5V-Turbo vision coordination
+multimodal_enabled = true               # Enable multimodal (vision coordination)
 long_horizon_enabled = true             # GLM-5.2 also supports long-horizon
-context_degradation_enabled = true      # Auto-downgrade 1M → 200K under pressure
+# Note: dual_thinking, preserved_thinking, vision_coordination, context_degradation
+# are compiler-level kwargs for create_provider(), not TOML driver fields.
+# Use thinking_mode and per-request overrides for dual thinking control.
 ```
 
 | Field | Type | Default | Description |
@@ -341,10 +339,10 @@ context_degradation_enabled = true      # Auto-downgrade 1M → 200K under press
 | `compiler` | string | — | Must be `"glm_52"` |
 | `max_context_tokens` | int | `1_000_000` | GLM-5.2 context window (1M) |
 | `thinking_mode` | string | `"high"` | Default thinking mode: `high` or `max` |
-| `dual_thinking_enabled` | bool | `false` | Enable High/Max dual thinking mode |
-| `preserved_thinking_enabled` | bool | `false` | Enable PreservedThinking for coding plans |
-| `vision_coordination_enabled` | bool | `false` | Enable 5V-Turbo vision coordination |
-| `context_degradation_enabled` | bool | `false` | Auto-downgrade 1M → 200K under memory pressure |
+| `multimodal_enabled` | bool | `false` | Enable multimodal content (vision coordination) |
+| `long_horizon_enabled` | bool | `false` | Enable long-horizon autonomous mode |
+
+> **Note:** Features like dual thinking, preserved thinking, vision coordination, and context degradation are controlled through compiler-level kwargs passed to `create_provider()`, not through TOML driver fields. For TOML configuration, use `thinking_mode` to set the default thinking depth, and override per-request with `meta={"thinking_mode": "max"}`. Context degradation is handled internally by the AutoCompactor.
 
 ### GLM-5V-Turbo Driver (for Vision Coordination)
 
@@ -372,8 +370,9 @@ model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
 thinking_mode = "high"
-dual_thinking_enabled = true
-preserved_thinking_enabled = true
+multimodal_enabled = true
+# Note: preserved_thinking_enabled and vision_coordination_enabled
+# are create_provider() kwargs, not TOML driver fields.
 ```
 
 ### MiniMaxNative Driver
@@ -388,7 +387,6 @@ max_context_tokens = 1_000_000
 multimodal_enabled = true
 desktop_enabled = true
 msa_efficient = true
-group_id = ""
 ```
 
 ## Smart Routing Configuration
@@ -604,7 +602,6 @@ max_output_tokens = 384_000
 multimodal_enabled = true
 desktop_enabled = true
 msa_efficient = true
-group_id = ""
 
 [drivers.openai_compatible.glm_5]
 base_url = "https://open.bigmodel.cn/api/paas/v4"

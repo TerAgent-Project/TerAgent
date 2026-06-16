@@ -43,7 +43,7 @@ The `EnhancedPermissionManager` resolves permissions through 7 layers, from high
 | 2 | `config` | 60 | Rules loaded from `agent.toml` |
 | 3 | `project` | 50 | Project-level rules |
 | 4 | `system` | 10 | System default rules (built-in) |
-| 5 | Permission Level | — | `DEFAULT` / `PLAN` / `BYPASS` / `ACCEPT_EDITS` / `AUTO` |
+| 5 | Permission Level | — | `DEFAULT` / `PLAN` / `BYPASS` / `ACCEPT_EDITS` / `AUTO` / `CUSTOM` |
 | 6 | AI Classifier | — | Consultative LLM-based judgment (async only) |
 | 7 | Default DENY | — | When no rule matches, deny by default |
 
@@ -135,7 +135,7 @@ Splits commands on `|`, `&&`, `||`, `;` and checks each sub-command independentl
 | Persistence | `crontab`, `at`, `launchctl` |
 | Encoding bypass | `base64 -d`, `xxd -r`, `\x41` patterns |
 | Remote execution | `curl \| sh`, `eval`, `source /tmp/...` |
-| Fork bomb / disk write | `:(){ :\|:& };:`, `> /dev/sd` |
+| Dangerous redirect | Redirects to `/etc`, `/dev`, `/sys`, `/proc`, `/boot` etc. |
 
 #### Windows-Specific Dangerous Patterns (16 patterns)
 
@@ -176,13 +176,9 @@ On Windows, the following system paths are also protected:
 |------|-------------|
 | `%SystemRoot%\` (e.g., `C:\Windows\`) | Windows system directory |
 | `%SystemRoot%\System32\` | System binaries and configs |
-| `%SystemRoot%\SysWOW64\` | 64-bit system directory |
-| `C:\Program Files\` | Installed applications |
-| `C:\Program Files (x86)\` | 32-bit applications |
-| `C:\ProgramData\` | Global application data |
-| `C:\System Volume Information\` | System restore points |
+| `%SystemRoot%\System\` | 16-bit system compatibility |
 
-These paths are resolved from environment variables (`SystemRoot`, `ProgramData`) and are automatically checked on Windows.
+These paths are resolved from the `SystemRoot` environment variable and are automatically checked on Windows.
 
 ### Layer 5: Cross-Chain Detection
 

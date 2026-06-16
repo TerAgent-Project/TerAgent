@@ -45,6 +45,9 @@ async def main() -> None:
     )
     print(f"\nTAP response:\n{tap_response.raw_text}")
 
+    # Clean up — release any persistent HTTP connections held by the adapter.
+    await provider.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

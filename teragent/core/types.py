@@ -87,6 +87,9 @@ class MessageType(Enum):
     REVIEW_FEEDBACK = "review_feedback"           # 审查反馈（Reviewer 结果）
     REPAIR_INSTRUCTION = "repair_instruction"     # 修复指令（自动修复引导）
 
+    # === 编排 ===
+    HANDOFF = "handoff"                           # Agent 转交信号（Swarm 编排中 Agent 切换控制权）
+
     # === 元消息 ===
     CONTEXT_SUMMARY = "context_summary"           # 上下文压缩摘要（AutoCompactor 产出）
     TOMBSTONE = "tombstone"                       # 已删除消息的占位符
@@ -294,6 +297,24 @@ class Message:
         )
 
     @classmethod
+    def handoff(cls, content: str, target_agent: str = "") -> Message:
+        """创建 Agent 转交消息（Swarm 编排中使用）
+
+        当 Agent 通过 Handoff 机制转交控制权时产生此消息，
+        记录转交目标和转交上下文。
+
+        Args:
+            content: 转交说明文本
+            target_agent: 目标 Agent 名称
+        """
+        return cls(
+            role=MessageRole.SYSTEM,
+            content=content,
+            message_type=MessageType.HANDOFF,
+            metadata={"target_agent": target_agent} if target_agent else {},
+        )
+
+    @classmethod
     def tombstone(cls, original_role: MessageRole = MessageRole.SYSTEM) -> Message:
         """创建墓碑消息（标记已删除的消息位置）
 
@@ -437,6 +458,11 @@ class Message:
             MessageType.REPAIR_INSTRUCTION,
             MessageType.REVIEW_FEEDBACK,
         )
+
+    @property
+    def is_handoff(self) -> bool:
+        """是否为 Agent 转交消息"""
+        return self.message_type == MessageType.HANDOFF
 
     def __repr__(self) -> str:
         """简洁的表示形式，方便调试"""

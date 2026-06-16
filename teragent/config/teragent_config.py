@@ -36,6 +36,7 @@ else:
     except ImportError:
         tomllib = None  # type: ignore[assignment]
 
+from teragent.config.agent_config import AgentConfig
 from teragent.config.circuit_breaker_config import CircuitBreakerConfig
 from teragent.config.context_management_config import ContextManagementConfig
 from teragent.config.coordination_config import CoordinationConfig
@@ -43,7 +44,9 @@ from teragent.config.driver_config import DriverConfig
 from teragent.config.execution_pipeline_config import ExecutionPipelineConfig
 from teragent.config.file_safety_config import FileSafetyConfig
 from teragent.config.hooks_config import HooksConfig
+from teragent.config.mcp_config import MCPServerConfig
 from teragent.config.model_fallback_config import ModelFallbackConfig
+from teragent.config.orchestration_config import OrchestrationConfig
 from teragent.config.permission_config import PermissionConfig
 from teragent.config.recovery_config import RecoveryConfig
 from teragent.config.session_config import SessionConfig
@@ -139,6 +142,11 @@ class TerAgentConfig:
     # --- Driver configs ---
     drivers: dict[str, DriverConfig] = field(default_factory=dict)
 
+    # --- Phase 2: Orchestration / Agent / MCP configs ---
+    orchestration: OrchestrationConfig = field(default_factory=OrchestrationConfig)
+    agents: dict[str, AgentConfig] = field(default_factory=dict)
+    mcp_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+
     # --- Raw TOML dict (for backward compat) ---
     _raw: dict = field(default_factory=dict, repr=False)
 
@@ -158,6 +166,25 @@ class TerAgentConfig:
 
         # Load driver configs
         drivers = load_driver_configs(raw)
+
+        # Phase 2: Orchestration config
+        orchestration = OrchestrationConfig.from_dict(raw.get("orchestration", {}))
+
+        # Phase 2: Agent configs ([agents.<name>] sections)
+        agents_raw = raw.get("agents", {})
+        agents: dict[str, AgentConfig] = {}
+        if isinstance(agents_raw, dict):
+            for agent_name, agent_data in agents_raw.items():
+                if isinstance(agent_data, dict):
+                    agents[agent_name] = AgentConfig.from_dict(agent_name, agent_data)
+
+        # Phase 2: MCP server configs ([mcp.<name>] or [mcp_servers.<name>] sections)
+        mcp_raw = raw.get("mcp", raw.get("mcp_servers", {}))
+        mcp_servers: dict[str, MCPServerConfig] = {}
+        if isinstance(mcp_raw, dict):
+            for server_name, server_data in mcp_raw.items():
+                if isinstance(server_data, dict):
+                    mcp_servers[server_name] = MCPServerConfig.from_dict(server_name, server_data)
 
         # Model fallback: [model.fallback]
         _model_val = raw.get("model")
@@ -197,6 +224,11 @@ class TerAgentConfig:
 
             # Drivers
             drivers=drivers,
+
+            # Phase 2: Orchestration / Agent / MCP
+            orchestration=orchestration,
+            agents=agents,
+            mcp_servers=mcp_servers,
 
             # Keep raw dict for backward compat
             _raw=raw,
@@ -244,8 +276,14 @@ class TerAgentConfig:
                 f"Using all-default config — this may not be intended. "
                 f"Please fix the config file or remove it to suppress this warning."
             )
+            # frozen dataclass 不允许属性赋值，使用 object.__setattr__ 绕过
             instance = cls()
-            instance._raw["_load_error"] = str(e)
+            try:
+                raw_with_error = dict(instance._raw)
+                raw_with_error["_load_error"] = str(e)
+                object.__setattr__(instance, '_raw', raw_with_error)
+            except (AttributeError, TypeError):
+                pass  # 如果仍然无法设置，静默忽略
             return instance
 
     def validate(self) -> list[str]:
@@ -467,5 +505,39 @@ class TerAgentConfig:
                     "msa_efficient": dc.msa_efficient,
                 }
                 for name, dc in self.drivers.items()
+            },
+            # Phase 2: Orchestration / Agent / MCP
+            "orchestration": {
+                "mode": self.orchestration.mode,
+                "sequence": self.orchestration.sequence,
+                "fan_out": self.orchestration.fan_out,
+                "fan_in": self.orchestration.fan_in,
+                "router_agent": self.orchestration.router_agent,
+                "loop_agents": self.orchestration.loop_agents,
+                "max_iterations": self.orchestration.max_iterations,
+                "exit_condition": self.orchestration.exit_condition,
+                "coordinator": self.orchestration.coordinator,
+                "checkpoint_enabled": self.orchestration.checkpoint_enabled,
+                "human_in_the_loop": self.orchestration.human_in_the_loop,
+            },
+            "agents": {
+                name: {
+                    "name": ac.name,
+                    "driver": ac.driver,
+                    "role": ac.role,
+                    "description": ac.description,
+                    "tools": ac.tools,
+                    "output_key": ac.output_key,
+                    "max_steps": ac.max_steps,
+                    "handoffs": ac.handoffs,
+                    "mcp_servers": ac.mcp_servers,
+                    "input_guardrails": ac.input_guardrails,
+                    "output_guardrails": ac.output_guardrails,
+                }
+                for name, ac in self.agents.items()
+            },
+            "mcp_servers": {
+                name: mc.to_dict()
+                for name, mc in self.mcp_servers.items()
             },
         }

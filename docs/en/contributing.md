@@ -71,6 +71,19 @@ teragent/
 │   ├── compilers/     # Concrete compilers: default, glm, glm_5, glm_52, glm_5v_turbo, anthropic, deepseek, deepseek_v4, minimax_m3
 │   ├── adapters/      # Concrete adapters: openai_compatible, anthropic_native, glm_native, minimax_native, mock
 │   └── prompts/       # Intent-specific system prompts
+├── orchestration/     # Multi-Agent orchestration (v0.2.0+)
+│   ├── agent.py       # Agent base class — independent provider, tools, handoffs
+│   ├── orchestrator.py # Orchestrator — strategy pattern, run() and run_stream()
+│   ├── handoff.py     # Handoff + HandoffTool + HandoffInputFilter
+│   ├── shared_state.py # SharedState + ScopedState
+│   ├── rwlock.py      # AsyncRWLock — writer-priority async read-write lock
+│   ├── run_context.py # RunContext + UsageTracker
+│   ├── cancellation.py # CancellationToken — thread-safe cooperative cancellation
+│   ├── guardrail.py   # Guardrail — input/output, fail-fast parallel check engine
+│   ├── checkpoint.py  # OrchestrationCheckpoint — state snapshot save/restore
+│   ├── approval.py    # ApprovalGate — human-in-the-loop tool approval
+│   ├── agent_hooks.py # AgentHooks — lifecycle hooks (start/end/handoff/tool/model)
+│   └── patterns/      # Execution patterns: Sequential, Swarm, Parallel, Conditional, Loop
 ├── security/          # Security architecture
 │   ├── permission.py  # PermissionManager + EnhancedPermissionManager
 │   ├── sandbox.py     # Sandbox execution (3 levels)
@@ -89,46 +102,64 @@ teragent/
 │   ├── memory.py      # .agent.md persistent memory
 │   ├── code_indexer.py    # tree-sitter AST indexing (optional)
 │   ├── reference_graph.py # networkx dependency graph (optional)
-│   └── vector_indexer.py  # LanceDB semantic search (optional)
+│   ├── vector_indexer.py  # LanceDB semantic search (optional)
+│   ├── retention_tracker.py # Context retention tracking
+│   ├── dependency_reporter.py # Dependency analysis reporting
+│   └── profiles.py    # Context management profiles
 ├── pipeline/          # Pipeline primitives
 │   ├── extractor.py   # File extraction from model output
 │   ├── prompt_builder.py  # Template-based prompt construction
 │   ├── checklist.py   # Deterministic code verification
 │   ├── retry.py       # Exponential backoff retry
+│   ├── subagent_worker.py # Sub-agent pipeline worker
 │   └── tracing.py     # TAP tracing + DPO pair generation
 ├── streaming/         # Streaming execution
 │   ├── streaming_executor.py  # StreamingToolExecutor
 │   └── stream_events.py      # Stream event types + parsers
 ├── tools/             # Tool system
 │   ├── base.py        # BaseTool ABC + ToolResult
-│   ├── registry.py    # ToolRegistry
+│   ├── registry.py    # ToolRegistry (with categories, intent recommendation)
 │   ├── orchestrator.py # ToolOrchestrator
-│   └── desktop.py     # DesktopTool (desktop automation)
+│   ├── decorator.py   # @tool decorator — Python function → BaseTool
+│   ├── schema_gen.py  # JSON Schema auto-generation from function signatures
+│   ├── agent_tool.py  # AgentTool — Agent-as-Tool (delegation, control returns)
+│   ├── orchestrator_tool.py # OrchestratorTool — nested multi-Agent orchestration as tool
+│   ├── auth.py        # AuthScheme, AuthCredential, AuthManager
+│   ├── toolpack.py    # ToolPack — grouped tools with shared lifecycle
+│   ├── mcp_toolset.py # MCPToolset — MCP server connection management
+│   ├── openapi_toolset.py # OpenAPIToolset — auto-generate tools from OpenAPI spec
+│   ├── result_cache.py # ResultCache — TTL + LRU caching for tool results
+│   ├── desktop.py     # DesktopTool (desktop automation)
+│   ├── hub/           # ToolHubClient — tool marketplace client
+│   └── builtin/       # Built-in tools: file, code, web, analysis
 ├── router/            # Smart model routing
 │   └── model_router.py # ModelRouter, RoutingTable, PipelineManager
 ├── long_horizon/      # Long-horizon autonomous tasks
-│   ├── manager.py     # LongHorizonTaskManager
+│   ├── task_manager.py # LongHorizonTaskManager
 │   ├── checkpoint.py  # CheckpointStore
-│   ├── evaluator.py   # SelfEvaluator
-│   ├── strategy.py    # StrategySwitcher
-│   └── progress.py    # ProgressTracker
+│   ├── self_evaluation.py # SelfEvaluator
+│   ├── strategy_switch.py # StrategySwitcher
+│   ├── progress.py    # ProgressTracker
+│   └── types.py       # Long-horizon data types
 ├── benchmark/         # Benchmark framework
-│   └── runner.py      # BenchmarkRunner
+│   └── benchmark.py   # BenchmarkRunner
 ├── intent/            # Intent classification
 │   ├── classifier.py  # IntentClassifier
 │   └── confirmation.py # ConfirmationGate
 ├── hooks/             # Hook system
 │   ├── manager.py     # HookManager
 │   └── builtin/       # Built-in hooks (audit, dangerous command)
-├── coordination/      # Sub-agent coordination
-│   ├── sub_agent_manager.py  # SubAgentManager
-│   └── message_bus.py        # AgentMessageBus
+├── coordination/      # DEPRECATED — migrated to orchestration/ in v0.2.0
+│   └── __init__.py    # Only deprecation warnings and migration guide
 ├── session/           # Session persistence
 │   └── persistence.py # SessionPersistence (SQLite)
 ├── config/            # Configuration system
 │   ├── loader.py      # Config loading + provider creation
 │   ├── teragent_config.py    # Top-level config
 │   ├── driver_config.py      # Driver config
+│   ├── agent_config.py       # Agent config
+│   ├── orchestration_config.py # Orchestration config
+│   ├── mcp_config.py        # MCP server config
 │   └── ...            # 15+ typed config dataclasses
 ├── event_bus.py       # EventBus (signal-driven communication)
 ├── utils/             # Utilities

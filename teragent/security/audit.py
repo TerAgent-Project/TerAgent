@@ -3,9 +3,9 @@
 
 改动:
   - 全局 `_db_path` 已消除
-  - 新增 AuditLogger 类，通过构造器注入 db_path
-  - 模块级函数保留为向后兼容别名（标记 deprecated），委托给默认实例
-  - 所有消费者（permission.py, file_writer.py, audit_hook.py）可选择性接受 AuditLogger 注入
+  - AuditLogger 类通过构造器注入 db_path，可安全并发使用
+  - 模块级向后兼容函数已移除（Phase 0.3 清理）
+  - 所有消费者（permission.py, file_writer.py, audit_hook.py）已迁移至 AuditLogger 实例方法
 
 设计原则:
   - AuditLogger 实例可安全地被多个组件共享
@@ -13,27 +13,13 @@
 """
 
 import asyncio
-import functools
 import logging
 import os
-import threading
 import time
-from typing import Any, Awaitable, Callable
 
 __all__ = [
     "AuditLogger",
     "DEFAULT_DB_PATH",
-    "audit_log",
-    "cleanup_old_entries",
-    "get_audit_stats",
-    "get_db_path",
-    "init_audit_db",
-    "log_audit",
-    "query_by_action",
-    "query_by_request_id",
-    "query_by_time_range",
-    "rotate_audit_db",
-    "set_db_path",
 ]
 
 import aiosqlite
@@ -321,132 +307,3 @@ class AuditLogger:
             await self._db.close()
             self._db = None
 
-
-# ===== 向后兼容：模块级默认实例和函数（deprecated） =====
-
-_default_audit_logger = AuditLogger()
-_db_path_lock = threading.Lock()
-
-
-def set_db_path(path: str) -> None:
-    """Configure the audit database path.
-
-    DEPRECATED (Phase 0.3): Use AuditLogger(db_path=...) instead.
-    """
-    global _default_audit_logger
-    with _db_path_lock:
-        old = _default_audit_logger
-        _default_audit_logger = AuditLogger(db_path=path)
-        # Best-effort close old connection (safe async wrapper)
-        if old is not None and hasattr(old, '_db') and old._db is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                async def _safe_close(db):
-                    try:
-                        await db.close()
-                    except Exception:
-                        pass
-                loop.create_task(_safe_close(old._db))
-            except Exception:
-                pass
-
-
-def get_db_path() -> str:
-    """Return the current audit database path.
-
-    DEPRECATED (Phase 0.3): Use AuditLogger.db_path property instead.
-    """
-    with _db_path_lock:
-        return _default_audit_logger.db_path
-
-
-async def init_audit_db() -> None:
-    """Initialize the audit database.
-
-    DEPRECATED (Phase 0.3): Use AuditLogger.init_db() instead.
-    """
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    await logger_instance.init_db()
-
-
-async def log_audit(action: str, details: str = "") -> None:
-    """Write an audit log entry.
-
-    DEPRECATED (Phase 0.3): Use AuditLogger.log_audit() instead.
-    """
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    await logger_instance.log_audit(action, details)
-
-
-def audit_log(action_name: str) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
-    """装饰器：记录关键操作的审计日志
-
-    DEPRECATED (Phase 0.3): Use AuditLogger.log_audit() instead.
-    """
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            start_time = time.time()
-            try:
-                result = await func(*args, **kwargs)
-                duration = time.time() - start_time
-                with _db_path_lock:
-                    inst = _default_audit_logger
-                await inst.log_audit(action_name, f"Success in {duration:.2f}s. Args: {str(args)[:100]}")
-                return result
-            except Exception as e:
-                duration = time.time() - start_time
-                with _db_path_lock:
-                    inst = _default_audit_logger
-                await inst.log_audit(action_name, f"Failed in {duration:.2f}s. Error: {str(e)}")
-                raise
-        return wrapper
-    return decorator
-
-
-async def query_by_action(action: str, limit: int = 100) -> list[dict]:
-    """查询指定操作类型的审计记录。DEPRECATED: Use AuditLogger.query_by_action()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.query_by_action(action, limit)
-
-
-async def query_by_time_range(
-    start_time: float,
-    end_time: float | None = None,
-    limit: int = 100,
-) -> list[dict]:
-    """查询指定时间范围内的审计记录。DEPRECATED: Use AuditLogger.query_by_time_range()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.query_by_time_range(start_time, end_time, limit)
-
-
-async def query_by_request_id(request_id: str) -> list[dict]:
-    """查询指定请求 ID 的所有审计记录。DEPRECATED: Use AuditLogger.query_by_request_id()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.query_by_request_id(request_id)
-
-
-async def cleanup_old_entries(max_age_days: int = 90) -> int:
-    """删除超过指定天数的审计记录。DEPRECATED: Use AuditLogger.cleanup_old_entries()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.cleanup_old_entries(max_age_days)
-
-
-async def rotate_audit_db(backup_path: str | None = None, max_age_days: int = 90) -> str | None:
-    """Rotate the audit DB. DEPRECATED: Use AuditLogger.rotate_audit_db()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.rotate_audit_db(backup_path, max_age_days)
-
-
-async def get_audit_stats() -> dict:
-    """获取审计日志统计摘要。DEPRECATED: Use AuditLogger.get_audit_stats()"""
-    with _db_path_lock:
-        logger_instance = _default_audit_logger
-    return await logger_instance.get_audit_stats()

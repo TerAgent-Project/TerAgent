@@ -11,13 +11,8 @@ This is a library core primitive: TAP request assembly → execute_tap →
 file extraction → safe write → sandbox execution. No EventBus dependency.
 """
 import asyncio
-import fcntl
-import json
 import logging
-import os
 import re
-import time
-import uuid
 from typing import TYPE_CHECKING
 
 __all__ = [
@@ -43,17 +38,6 @@ logger = logging.getLogger(__name__)
 
 COMMAND_BLOCK_PATTERN = r'<command\s+cwd=["\'](.*?)["\']\s*>(.*?)</command>'
 
-# --- Dangerous command detection ---
-# NOTE: DANGEROUS_PATTERNS is kept for backward compatibility.
-# Active risk classification now uses classify_command_risk() from sandbox module.
-DANGEROUS_PATTERNS = [
-    r'\brm\s+-rf\b', r'\bsudo\b', r'\bmkfs\b', r'\bdd\s+if=',
-    r'\bchmod\s+[0-7]{3,4}\b', r'\bchown\b', r'\bshutdown\b',
-    r'\breboot\b', r'\binit\s+[06]\b', r':\(\)\{\s*:\|:&\s*\}',
-    r'\bformat\b', r'\bdel\s+/[sSfFq]\b', r'\bapt\b.*\binstall\b',
-    r'\byum\b.*\binstall\b', r'\bpip\b.*\binstall\b', r'\bnpm\b.*\binstall\b',
-]
-
 
 def extract_commands_from_response(content: str) -> list[dict]:
     """Extract <command> tags from TAP response."""
@@ -76,40 +60,6 @@ def is_dangerous_command(cmd: str) -> bool:
     return risk_level in (CommandRiskLevel.DANGEROUS, CommandRiskLevel.CRITICAL, CommandRiskLevel.WARNING)
 
 
-def _sync_append_trace(trace_file: str, record: dict) -> None:
-    """Synchronously append a JSONL line to trace file (for run_in_executor).
-
-    DEPRECATED: This is kept for backward compatibility. New code should
-    use TAPTracer.record_request() / record_response() instead (Phase 10).
-
-    Uses file locking (fcntl) on Unix to prevent write corruption from
-    concurrent workers writing to the same trace file.
-    """
-    try:
-        with open(trace_file, 'a', encoding='utf-8') as f:
-            try:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            except (ImportError, OSError):
-                pass  # Locking not available on this platform
-            try:
-                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-            finally:
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except (ImportError, OSError):
-                    pass
-    except (TypeError, ValueError) as e:
-        # Best-effort: if record contains non-serializable objects,
-        # convert them to strings via default=str; if that also fails,
-        # log and skip rather than crashing the worker.
-        logger.warning(f"Trace serialization failed, skipping: {e}")
-    except Exception as e:
-        # Catch-all: IO errors, OS errors, etc. must not crash the worker.
-        logger.warning(f"Trace write failed, skipping: {e}")
-
-
 class SubAgentWorker:
     """Library-level sub-agent worker: TAP → execute → extract → write → sandbox.
 
@@ -120,8 +70,7 @@ class SubAgentWorker:
         - If a tracer is provided (via constructor or ModelProvider), all TAP
           requests and responses are recorded through TAPTracer for DPO pair
           generation.
-        - If no tracer is provided, falls back to legacy _sync_append_trace
-          for backward compatibility.
+        - If no tracer is provided, tracing is skipped (a debug log is emitted).
 
     Attributes:
         task_id: Task identifier (e.g., "1.1")
@@ -178,12 +127,6 @@ class SubAgentWorker:
         """
         # Determine tracing strategy
         tracer = self._get_tracer()
-        _use_legacy_trace = tracer is None  # Fall back to legacy if no tracer
-
-        # --- Trace directory preparation (legacy fallback) ---
-        trace_dir = os.path.join(self.workspace_root, ".agent", "traces")
-        os.makedirs(trace_dir, exist_ok=True)
-        trace_file = os.path.join(trace_dir, f"{self.task_id}_{uuid.uuid4().hex[:8]}.jsonl")
 
         try:
             # Classify task type: command_only / code_generation / mixed
@@ -254,21 +197,14 @@ class SubAgentWorker:
                 )
                 tap_request.constraints.insert(0, skeleton_constraint)
 
-            # Phase 10: Record TAP request via tracer (or legacy fallback)
-            loop = asyncio.get_running_loop()
+            # Phase 10: Record TAP request via tracer
             trace_id = ""
 
             if tracer is not None:
                 # Phase 10: Structured tracing via TAPTracer
                 trace_id = await tracer.record_request(tap_request)
             else:
-                # Legacy: ad-hoc JSONL tracing
-                await loop.run_in_executor(
-                    None,
-                    _sync_append_trace,
-                    trace_file,
-                    {"type": "tap_request", "data": tap_request.__dict__}
-                )
+                logger.debug(f"No tracer configured for task {self.task_id}, skipping request trace")
 
             # 3. Execute TAP request
             prompt_tokens = estimate_tokens(str(tap_request))
@@ -276,7 +212,7 @@ class SubAgentWorker:
 
             tap_response = await self.model.execute_tap(tap_request)
 
-            # Phase 10: Record TAP response via tracer (or legacy fallback)
+            # Phase 10: Record TAP response via tracer
             raw_text = tap_response.raw_text or ""  # Guard against None
 
             if tracer is not None:
@@ -288,13 +224,7 @@ class SubAgentWorker:
                     intent=intent,
                 )
             else:
-                # Legacy: ad-hoc JSONL tracing
-                await loop.run_in_executor(
-                    None,
-                    _sync_append_trace,
-                    trace_file,
-                    {"type": "tap_response", "data": {"raw_text": raw_text, "usage": tap_response.usage}}
-                )
+                logger.debug(f"No tracer configured for task {self.task_id}, skipping response trace")
 
             response_tokens = estimate_tokens(raw_text)
             logger.info(f"Task {self.task_id} response tokens estimated: {response_tokens}")

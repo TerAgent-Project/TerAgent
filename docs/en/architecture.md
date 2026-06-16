@@ -85,16 +85,16 @@ TerAgent's reliability system defaults to **advisory, not blocking**:
    └────────┬────────┘  └─────────────────┘
             │
    ┌────────▼────────┐  ┌─────────────────┐  ┌──────────────────────┐
-   │   Pipeline       │  │   Context       │  │   Coordination       │
+   │   Pipeline       │  │   Context       │  │   Orchestration      │
    │                 │  │                 │  │                      │
-   │ Extractor       │  │ ContextWindow   │  │ SubAgentManager      │
-   │ PromptBuilder   │  │ AutoCompactor   │  │ AgentMessageBus      │
-   │ Checklist       │  │ Microcompactor  │  │                      │
-   │ Retry           │  │ CodeIndexer*    │  └──────────────────────┘
-   │ TAPTracer       │  │ ReferenceGraph* │
-   └─────────────────┘  │ VectorIndexer*  │
-                        └─────────────────┘
-                        (* optional dependencies)
+   │ Extractor       │  │ ContextWindow   │  │ Agent                │
+   │ PromptBuilder   │  │ AutoCompactor   │  │ Orchestrator         │
+   │ Checklist       │  │ Microcompactor  │  │ Handoff              │
+   │ Retry           │  │ CodeIndexer*    │  │ SharedState          │
+   │ TAPTracer       │  │ ReferenceGraph* │  │ CancellationToken   │
+   └─────────────────┘  │ VectorIndexer*  │  │ Guardrail / Approval │
+                        └─────────────────┘  │ 5 Patterns           │
+                        (* optional deps)    └──────────────────────┘
 
    ┌──────────────────────┐  ┌──────────────────────────────────────┐
    │   Router             │  │   Long-Horizon                       │
@@ -151,7 +151,7 @@ User Input
         │
         ▼
 ┌──────────────────┐
-│ SubAgent Deleg.   │  (if CREATE_PROJECT + SubAgentManager)
+│ Orchestrator      │  (if multi-agent configured)
 └───────┬──────────┘
         │
         ▼
@@ -289,10 +289,12 @@ AgentLoop
     ├── SessionPersistence (SQLite via aiosqlite)
     └── EventBus (shared across components)
 
-SubAgentManager
-    ├── ModelProvider (shared reference)
-    ├── ToolRegistry (shared reference)
-    └── AgentMessageBus (shared reference)
+Orchestrator
+    ├── Agent instances (independent providers, tools, handoffs)
+    ├── OrchestrationPattern (Sequential / Swarm / Parallel / Conditional / Loop)
+    ├── SharedState (scoped: session / agent / global)
+    ├── RunContext + UsageTracker
+    └── CancellationToken (thread-safe cooperative cancellation)
 ```
 
 ## Cross-Platform Architecture

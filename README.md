@@ -1,19 +1,28 @@
 
 # TerAgent
 
-**Terminal AI Agent Library — TAP IR + Model-Specific Compilation**
+**Production AI Agent Framework — Orchestration · Security · Reliability · Multi-Model**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Version: 0.1.3](https://img.shields.io/badge/version-0.1.3-blue.svg)](https://github.com/teragent/teragent)
+[![Version: 0.2.0](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/teragent/teragent)
 
 **English** | [中文](README_zh.md)
 
 ---
 
-TerAgent is a Python library for building production AI agent systems with a **compiler-adapter architecture**. It introduces **TAP IR** (Tool-Augmented Prompt Intermediate Representation) — a model-agnostic in-memory representation that separates *what to ask* from *how to format it*, enabling orthogonal composition of prompt compilers and protocol adapters.
+TerAgent is a Python framework for building production-grade AI agent systems. It provides the full stack — from **multi-agent orchestration** (Swarm/Sequential patterns with Handoff coordination) to **tool orchestration** (parallel/serial scheduling with permission enforcement), from a **7-layer security architecture** to **4-layer reliability circuit breakers**, and from **TAP IR** model-agnostic compilation to **intelligent multi-model routing**.
 
-**9 Compilers** × **5 Adapters** = **45 model+protocol combinations** (including test adapter), each optimized for a specific pairing.
+### Core Pillars
+
+| Pillar | What It Solves | Key Mechanisms |
+|---|---|---|
+| **Multi-Agent Orchestration** | Single agents can't handle complex workflows | Swarm pattern (handoff-based), Sequential pattern, SharedState, CancellationToken, lifecycle hooks |
+| **Tool Orchestration** | Uncontrolled tool execution is unsafe and slow | Parallel/serial scheduling, permission levels, Hook integration, safety-aware partitioning |
+| **Security** | Agents with tool access need guardrails | 7-layer permission resolution, 6-layer command defense, 2PC file writes, 3-level sandbox |
+| **Reliability** | Agents burn tokens on infinite loops and failures | 4 circuit breakers, streaming retry with batch fallback, step budgets, context compaction |
+| **Multi-Model** | No single model fits all tasks; formats differ across providers | TAP IR (model-agnostic), 9 Compilers × 5 Adapters = 45 combinations, smart 6-step routing |
+| **Self-Improvement** | No structured way to capture agent interactions | TAPTracer records every request→response with DPO pair generation |
 
 Now with **DeepSeek V4**, **MiniMax M3**, **GLM-5**, and **GLM-5.2** deep adaptation — intelligent multi-model routing, long-horizon autonomous tasks, native multimodal understanding, dual thinking modes, and desktop automation.
 
@@ -44,7 +53,7 @@ Now with **DeepSeek V4**, **MiniMax M3**, **GLM-5**, and **GLM-5.2** deep adapta
   - [Security Architecture](#security-architecture)
   - [Reliability System](#reliability-system)
   - [Context Management](#context-management)
-  - [Coordination (Sub-Agents)](#coordination-sub-agents)
+  - [Orchestration (Multi-Agent)](#orchestration-multi-agent)
   - [Intent Classification](#intent-classification)
   - [Hooks System](#hooks-system)
   - [Session Persistence](#session-persistence)
@@ -130,9 +139,6 @@ Switch between named pipeline configurations at runtime:
 - 📖 [Multimodal Guide](docs/en/multimodal_guide.md) — Image, video, desktop operations
 - 📖 [API Reference](docs/en/api-reference.md) — Full API documentation
 - 📖 [Configuration Manual](docs/en/configuration.md) — Complete agent.toml reference
-- 📖 [Four-Model Evaluation Report](docs/EVALUATION_FOUR_MODELS.md) — Comprehensive benchmark results
-- 📖 [GLM-5.2 Stability Report](docs/glm_52_stability_report.md) — Production stability verification
-- 📖 [Ascend Deployment Guide](docs/deployment_guide_ascend.md) — Deploying on Huawei Ascend NPU
 
 ---
 
@@ -447,7 +453,7 @@ TerAgent supports **Windows**, **macOS**, and **Linux** with platform-specific a
 | Sandbox Level 2 (Firecracker) | ❌ KVM required | ❌ KVM required | ✅ Full support |
 | Process tree kill | ✅ `taskkill /F /T` | ✅ `os.killpg()` | ✅ `os.killpg()` |
 | Windows dangerous commands | ✅ 16 patterns blocked | N/A | N/A |
-| Windows system path protection | ✅ `C:\Windows`, `Program Files`, etc. | N/A | N/A |
+| Windows system path protection | ✅ `C:\Windows`, `System32`, `System` | N/A | N/A |
 | Clipboard (X11) | N/A | ✅ `pbcopy`/`pbpaste` | ✅ `xclip` |
 | Clipboard (Wayland) | N/A | N/A | ✅ `wl-copy`/`wl-paste` |
 | Screenshot | ✅ PIL ImageGrab | ✅ PIL ImageGrab | ✅ `mss` preferred |
@@ -565,7 +571,7 @@ TerAgent supports **Windows**, **macOS**, and **Linux** with platform-specific a
 1. IntentClassifier → CHAT / DEBUG / CREATE_PROJECT
 2. ConfirmationGate → (if CREATE_PROJECT, ask user approval)
 3. Filter tools by intent (from config.intent_tools)
-4. SubAgent delegation (if CREATE_PROJECT + SubAgentManager available)
+4. Agent delegation via Orchestrator (if CREATE_PROJECT + multi-agent configured)
 5. Tool loop:
    a. Check step budget
    b. Context compaction (if approaching token limit)
@@ -590,7 +596,7 @@ TerAgent supports **Windows**, **macOS**, and **Linux** with platform-specific a
 | Streaming mode | `StreamingToolExecutor` | Auto-detects streaming capability, retries on failure, falls back to batch |
 | Session persistence | `SessionPersistence` | Saves/restores conversation state |
 | Hook system | `HookManager` | Pre/post execution hooks for customization |
-| Sub-agent coordination | `SubAgentManager` | Spawns child agents for complex tasks |
+| Multi-agent orchestration | `Orchestrator` | Multi-agent coordination with 5 patterns |
 | Event bus | `EventBus` | Signal-driven event emission throughout the lifecycle |
 
 ### Streaming Execution
@@ -625,7 +631,7 @@ Layer 1: user rules     (priority 100) ─┐
 Layer 2: config rules   (priority 60)  ─┤ These are PermissionRules
 Layer 3: project rules  (priority 50)  ─┤ with glob matching on
 Layer 4: system rules   (priority 10)  ─┘ tool_name + path
-Layer 5: PermissionLevel check           ← DEFAULT / PLAN / BYPASS / ACCEPT_EDITS / AUTO
+Layer 5: PermissionLevel check           ← DEFAULT / PLAN / BYPASS / ACCEPT_EDITS / AUTO / CUSTOM
 Layer 6: AI Classifier (async only)     ← consultative, uses LLM to judge intent
 Layer 7: Default DENY                   ← safe default when no rule matches
 ```
@@ -666,7 +672,7 @@ Layer 1: Command normalization    ← strip ANSI, null bytes, compress whitespac
 Layer 2: Pipeline chain splitting  ← check each sub-command in | && ; chains
 Layer 3: 8-category blacklist     ← privilege escalation, reverse shell, inline exec,
                                      system destroy, persistence, encoding bypass,
-                                     remote exec, fork bomb / disk write
+                                     remote exec, dangerous redirect
 Layer 4: Dangerous redirect detection ← > /etc/, > /dev/, > /sys/ (fine-grained per sub-command)
 Layer 5: Cross-chain detection    ← curl | sh, wget | python (visible only in full command)
 Layer 6: Package install warning  ← pip/npm/apt install → log warning, no hard block
@@ -741,21 +747,27 @@ Four independent circuit breakers protect against token waste and infinite loops
 | `DependencyReporter` | Generates dependency reports for TAP context (lazy-loaded, requires optional deps) |
 | `Memory` | `load_agent_md()` / `save_agent_md()` — persistent project memory via `.agent.md` files |
 
-### Coordination (Sub-Agents)
+### Orchestration (Multi-Agent)
 
-`SubAgentManager` creates and manages child agent lifecycles with three execution modes:
+`Orchestrator` coordinates multiple agents through pluggable execution patterns:
 
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| `SYNC` | Blocks parent until child completes | Simple sub-tasks that must finish before continuing |
-| `ASYNC` | Runs in background, notifies parent via `AgentMessageBus` on completion | Long-running background tasks |
-| `FORK` | Like SYNC but marks shared system prompt prefix for KV cache optimization | Repeated queries with shared context |
+| Pattern | Behavior | Use Case |
+|---------|----------|----------|
+| `Sequential` | Executes agents in order (A→B→C) | Pipeline tasks where each step depends on the previous |
+| `Swarm` | Agents hand off control via `transfer_to_{agent}` tool calls | Dynamic routing where agents decide who handles next |
+| `Parallel` | Fan-out → fan-in, all agents run concurrently | Independent sub-tasks that can run simultaneously |
+| `Conditional` | Router agent decides which agent to hand off to | Task routing based on input type or content |
+| `Loop` | Generator-Critic cycle with exit condition | Iterative refinement until quality threshold met |
 
-**Safety constraints:**
-- Maximum 15 steps per sub-agent (prevents infinite loops)
-- Maximum 5 concurrent sub-agents (prevents resource exhaustion)
-- Tool whitelist — sub-agents can only use explicitly allowed tools
-- Budget tracking — sub-agents respect the global step budget
+**Key concepts:**
+- **Agent** — independent unit with own provider, tools, handoffs, guardrails, hooks
+- **Handoff** — Swarm-mode control transfer between agents with input filtering
+- **SharedState** — scoped state sharing (session / agent / global) across agents
+- **CancellationToken** — thread-safe cooperative cancellation for long-running orchestrations
+- **Guardrail** — input/output validation with fail-fast parallel check engine
+- **ApprovalGate** — human-in-the-loop tool approval (supports parameter modification)
+- **AgentHooks** — lifecycle hooks (on_start/end/handoff/tool/model)
+- **OrchestratorTool** — nested orchestration: wrap an entire Orchestrator as a tool
 
 ### Intent Classification
 
@@ -833,7 +845,9 @@ TerAgent uses a typed configuration system backed by `agent.toml` files.
 | `teragent.config.session_config` | `SessionConfig` | Session persistence settings |
 | `teragent.config.hooks_config` | `HooksConfig` | Hook registration |
 | `teragent.config.recovery_config` | `RecoveryConfig` | Recovery strategy configuration |
-| `teragent.config.coordination_config` | `CoordinationConfig` | Sub-agent coordination settings |
+| `teragent.config.orchestration_config` | `OrchestrationConfig` | Multi-agent orchestration settings (5 patterns, agent config) |
+| `teragent.config.agent_config` | `AgentConfig` | Individual agent definition (provider, tools, handoffs) |
+| `teragent.config.mcp_config` | `MCPServerConfig` | MCP server connection parameters |
 | `teragent.config.execution_pipeline_config` | `ExecutionPipelineConfig` | Pipeline stage driver assignments |
 | `teragent.config.model_fallback_config` | `ModelFallbackConfig` | Model fallback chain configuration |
 | `teragent.config.driver_config` | `DriverConfig` | Individual model driver (compiler + adapter + model + API key) |
@@ -856,7 +870,7 @@ TerAgent uses a typed configuration system backed by `agent.toml` files.
 **Design principles:**
 - Fire-and-forget: async handlers via `create_task`, sync handlers via `run_in_executor`
 - Error isolation: single handler failure does not affect other handlers
-- Event history: tracks last 200 events with structured data for debugging
+- Event history: tracks last 100 basic + 200 structured events for debugging
 
 ---
 
@@ -900,18 +914,41 @@ rules = { allow = ["read_file:*", "explore_codebase:*"], deny = ["*:**/.env*", "
 
 ## How It Was Built
 
-Every line of code in TerAgent was generated by AI — not a single line was written by hand. The project follows a **Design → Plan → Code → Review** pipeline:
+TerAgent was built entirely through AI-assisted development — every line of code was generated by AI under human direction. The project follows a **Design → Plan → Code → Review** pipeline:
 
-- **Design**: I worked with multiple AI models (including DeepSeek, GLM-5) to define the core architecture — TAP as the IR, compiler/adapter orthogonal decoupling, security layers, and more.
-- **Plan**: I directed AI to decompose the system into 95 modules, specifying interfaces and dependency relationships, producing detailed task breakdowns.
-- **Code**: I instructed GLM-5 via natural language to generate code module by module, strictly following the plan.
-- **Review**: I directed AI to perform syntax checks, dependency validation, and runnability tests. Based on the feedback, I accepted, revised, or rejected the output.
+### Phase 1: Foundation (W1–W4)
 
-After the above pipeline, AI automatically compiled the project statistics: ~46,900 lines of Python code (17 sub-modules, 99 source files), ~28,300 lines of tests (61 test files), a test-to-source ratio of 60.4%, version 0.1.3 Beta, license Apache-2.0. These figures were also AI-generated.
+Established the core multi-agent orchestration framework and tool system:
 
-After publication, GLM-5 conducted an independent third-party evaluation of the entire codebase in a separate session, awarding an overall score of **7.4/10** (Architecture 9.0, Anti-Hallucination Security 7.5, Engineering Standards 6.5). The evaluation identified the core innovation as the TAP IR + Compiler/Adapter orthogonal composition, noted that the security architecture is essentially an "anti-AI-self-destruction" system, and flagged the main gaps: missing intent-action consistency checks, sandbox degradation requiring user confirmation, and no CI/CD. The evaluation reports are available at [`docs/EVALUATION_THREE_MODELS.md`](docs/EVALUATION_THREE_MODELS.md) (three-model) and [`docs/EVALUATION_FOUR_MODELS.md`](docs/EVALUATION_FOUR_MODELS.md) (four-model, also AI-generated).
+- **Orchestration Engine** — `Orchestrator` with Strategy pattern, supporting `Sequential` and `Swarm` execution modes; `Agent` base class with independent provider, tool set, handoff, and guardrail support; `Handoff` + `HandoffTool` for Swarm-style control transfer; `SharedState` for cross-agent state sharing with session/agent/global scoping; `CancellationToken` for cooperative cancellation; `AgentHooks` for lifecycle observation.
+- **Tool System** — `@tool` decorator for converting Python functions to `BaseTool` with auto-generated JSON Schema; `AgentTool` for Agent-as-Tool delegation; 9 built-in tools (file I/O, code execution, web search/scrape, code analysis).
+- **Agent & Orchestration Config** — `AgentConfig` and `OrchestrationConfig` for declarative TOML configuration.
 
-This development methodology is itself part of TerAgent: the `pipeline` module provides a reusable **Design → Plan → Code → Review** workflow.
+### Phase 2: Protocols & Advanced Patterns (W5–W8)
+
+Integrated external tool protocols and added advanced orchestration patterns:
+
+- **MCP Integration** — `MCPToolset` with stdio/SSE/streamable_http transport; `MCPConnectionPool` for connection pooling with LRU eviction and health checks.
+- **OpenAPI Toolset** — Auto-generate tools from OpenAPI 3.0 / Swagger 2.0 specs with safety-level inference.
+- **ToolPack** — Group related tools with shared lifecycle (`on_start`/`on_stop`) and resource management.
+- **Tool Hub** — Marketplace client for searching, installing, and publishing remote tools.
+- **Advanced Patterns** — `ParallelPattern` (fan-out/fan-in), `ConditionalPattern` (router-based), `LoopPattern` (generator-critic with exit conditions).
+- **Enhanced Registry** — Category-based registration, intent-based tool recommendation, `ToolInfo` metadata.
+
+### Phase 3: Security & Production Readiness (W9–W12)
+
+Hardened the system for production use:
+
+- **Authentication** — Unified `AuthManager` supporting bearer / API key / OAuth2 / basic schemes; `AuthCredential` with secure in-memory storage and masked repr.
+- **Nested Orchestration** — `OrchestratorTool` for hierarchical multi-agent workflows.
+- **Result Caching** — `ResultCache` with TTL + LRU eviction, deterministic key generation, and hit/miss/eviction statistics.
+- **Checkpoint & Recovery** — `OrchestrationCheckpoint` with atomic write (tempfile + `os.fsync` + `os.replace`), save/restore/list/cleanup.
+- **Human-in-the-Loop** — `ApprovalGate` with approve/reject/modify-params workflow and timeout handling.
+- **Async RW Lock** — Writer-preference `AsyncRWLock` for safe parallel access to `SharedState`.
+
+### Development Methodology
+
+This pipeline is itself part of TerAgent: the `pipeline` module provides a reusable **Design → Plan → Code → Review** workflow that was used to build the project itself.
 
 ---
 

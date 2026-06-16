@@ -26,7 +26,10 @@ __all__ = [
     "execute_in_sandbox",
 ]
 
+from teragent.security.audit import AuditLogger
 from teragent.utils.exceptions import SandboxViolation
+
+_audit_logger = AuditLogger()
 
 logger = logging.getLogger(__name__)
 
@@ -381,8 +384,7 @@ async def execute_in_sandbox(
         logger.error(f"SandboxViolation: {reason}")
         # 审计日志 (PLAN 5.4)
         try:
-            from teragent.security.audit import log_audit
-            await log_audit("command_blocked", f"Reason: {reason}, Cmd: {cmd[:100]}")
+            await _audit_logger.log_audit("command_blocked", f"Reason: {reason}, Cmd: {cmd[:100]}")
         except Exception as e:
             logger.debug(f"Audit logging for blocked command failed: {e}")
         raise SandboxViolation(reason)
@@ -401,8 +403,7 @@ async def execute_in_sandbox(
         except ImportError:
             logger.warning("FirecrackerSandbox not available, falling back to Level 1")
             try:
-                from teragent.security.audit import log_audit
-                await log_audit(
+                await _audit_logger.log_audit(
                     "sandbox_downgrade",
                     f"Sandbox level downgraded from 2 to 1: FirecrackerSandbox not available (ImportError)"
                 )
@@ -412,8 +413,7 @@ async def execute_in_sandbox(
         except RuntimeError as e:
             logger.warning(f"Firecracker not available ({e}), falling back to Level 1")
             try:
-                from teragent.security.audit import log_audit
-                await log_audit(
+                await _audit_logger.log_audit(
                     "sandbox_downgrade",
                     f"Sandbox level downgraded from 2 to 1: Firecracker not available ({e})"
                 )
@@ -425,8 +425,7 @@ async def execute_in_sandbox(
         if not shutil.which("docker"):
             logger.warning("Docker not found, falling back to Level 0")
             try:
-                from teragent.security.audit import log_audit
-                await log_audit(
+                await _audit_logger.log_audit(
                     "sandbox_downgrade",
                     "Sandbox level downgraded from 1 to 0: Docker not found"
                 )

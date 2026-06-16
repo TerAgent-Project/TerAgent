@@ -1,47 +1,31 @@
-"""teragent.coordination — 多 Agent 协作包
+"""teragent.coordination — 多Agent协调模块（已废弃）
 
-提供 Agent 间消息传递、子 Agent 管理和跨模型协同工作流能力。
+.. deprecated::
+    ``teragent.coordination`` 已废弃，将在未来版本中移除。
+    请使用 :mod:`teragent.orchestration` 替代。
+
+迁移指南:
+    - SubAgentManager → Orchestrator(mode=OrchestrationMode.SEQUENTIAL)
+    - AgentMessageBus → EventBus + SharedState
+    - AgentMode.SYNC/ASYNC/FORK → OrchestrationMode.SEQUENTIAL/PARALLEL/SWARM
+    - SubAgentInfo → Agent
+
+详细迁移说明请参考 docs/migration_guide.md
 """
 
-from teragent.coordination.glm5v_coordinator import (
-    CoordinationConfig,
-    CoordinationMode,
-    CoordinationPhase,
-    CoordinationResult,
-    CoordinationStep,
-    GLM52VCoordinatedWorkflow,
-)
-from teragent.coordination.message_bus import (
-    BROADCAST,
-    MAILBOX_MAX_SIZE,
-    AgentMessage,
-    AgentMessageBus,
-)
-from teragent.coordination.sub_agent_manager import (
-    SUB_AGENT_SYSTEM_PROMPT_PREFIX,
-    AgentMode,
-    SubAgentInfo,
-    SubAgentManager,
-    SubAgentStatus,
+from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "teragent.coordination is deprecated and will be removed in a future version. "
+    "Use teragent.orchestration instead. "
+    "See migration guide: SubAgentManager → Orchestrator, "
+    "AgentMessageBus → EventBus + SharedState, "
+    "AgentMode → OrchestrationMode.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__all__ = [
-    # Message bus
-    "AgentMessageBus",
-    "AgentMessage",
-    "MAILBOX_MAX_SIZE",
-    "BROADCAST",
-    # Sub-agent management
-    "SubAgentManager",
-    "AgentMode",
-    "SubAgentStatus",
-    "SubAgentInfo",
-    "SUB_AGENT_SYSTEM_PROMPT_PREFIX",
-    # GLM-5V-Turbo + GLM-5.2 coordination
-    "GLM52VCoordinatedWorkflow",
-    "CoordinationConfig",
-    "CoordinationMode",
-    "CoordinationPhase",
-    "CoordinationResult",
-    "CoordinationStep",
-]
+# 保留空模块以避免导入错误，所有功能已迁移到 orchestration
+__all__: list[str] = []

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "teragent"
-version = "0.1.3"
+version = "0.2.0"
 description = "Terminal AI Agent Library — TAP IR + Model-Specific Compilation"
 readme = "README.md"
 license = "Apache-2.0"

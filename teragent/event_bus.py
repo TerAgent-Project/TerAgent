@@ -44,11 +44,6 @@ class EventBus:
         self._subscribers: dict[str, list[Callable]] = defaultdict(list)
         self._event_history: list[tuple[str, float]] = []
 
-        # _shared 标记为 deprecated
-        # 新代码应通过构造器传递依赖，不再通过 bus._shared 中转
-        # 迁移指南: 搜索 `bus._shared[` 找到所有使用点，改为构造器注入
-        self._shared: dict[str, Any] = {}  # DEPRECATED: 组件间共享状态
-
         # Phase 7.3: 增强事件历史 — 存储事件数据
         self._event_data_history: list[dict] = []
         self._max_event_data_history: int = 200

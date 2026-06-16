@@ -45,8 +45,11 @@ __all__ = [
     "write_files_safely",
 ]
 
+from teragent.security.audit import AuditLogger
 from teragent.security.permission import PermissionLevel, PermissionManager
 from teragent.utils.exceptions import SandboxViolation
+
+_audit_logger = AuditLogger()
 
 # Phase 9.4: Enhanced permission support
 if TYPE_CHECKING:
@@ -228,8 +231,7 @@ async def atomic_write_file(
 
     # 审计日志
     try:
-        from teragent.security.audit import log_audit
-        await log_audit("file_write", f"Atomic write: {filepath} by {writer_id}")
+        await _audit_logger.log_audit("file_write", f"Atomic write: {filepath} by {writer_id}")
     except Exception as e:
         logger.debug(f"Audit logging failed (non-blocking): {e}")
 
@@ -274,8 +276,7 @@ async def write_files_safely(
 
     # 审计日志
     try:
-        from teragent.security.audit import log_audit
-        await log_audit("file_write", f"Batch write (2PC): {len(files_dict)} files to {workspace_root}")
+        await _audit_logger.log_audit("file_write", f"Batch write (2PC): {len(files_dict)} files to {workspace_root}")
     except Exception as e:
         logger.debug(f"Audit logging failed (non-blocking): {e}")
 

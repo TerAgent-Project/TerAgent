@@ -68,75 +68,106 @@ teragent/
 │   ├── adapter.py     # TAPAdapter ABC + Registry
 │   ├── provider.py    # ModelProvider (Compiler + Adapter composition)
 │   ├── types.py       # Message, MessageRole, MessageType, ToolSafety
-│   ├── compilers/     # Concrete compilers: default, glm, glm_5, glm_52, glm_5v_turbo, anthropic, deepseek, deepseek_v4, minimax_m3
-│   ├── adapters/      # Concrete adapters: openai_compatible, anthropic_native, glm_native, minimax_native, mock
-│   └── prompts/       # Intent-specific system prompts
-├── security/          # Security architecture
+│   ├── compilers/     # 具体编译器：default, glm, glm_5, glm_52, glm_5v_turbo, anthropic, deepseek, deepseek_v4, minimax_m3
+│   ├── adapters/      # 具体适配器：openai_compatible, anthropic_native, glm_native, minimax_native, mock
+│   └── prompts/       # 意图专属系统提示词
+├── orchestration/     # 多 Agent 编排（v0.2.0+）
+│   ├── agent.py       # Agent 基类 — 独立 provider、工具集、handoff
+│   ├── orchestrator.py # Orchestrator — 策略模式，支持 run() 和 run_stream()
+│   ├── handoff.py     # Handoff + HandoffTool + HandoffInputFilter
+│   ├── shared_state.py # SharedState + ScopedState
+│   ├── rwlock.py      # AsyncRWLock — 写者优先异步读写锁
+│   ├── run_context.py # RunContext + UsageTracker
+│   ├── cancellation.py # CancellationToken — 线程安全协作式取消
+│   ├── guardrail.py   # Guardrail — 输入/输出护栏，fail-fast 并行检查引擎
+│   ├── checkpoint.py  # OrchestrationCheckpoint — 编排状态快照保存/恢复
+│   ├── approval.py    # ApprovalGate — Human-in-the-loop 工具审批
+│   ├── agent_hooks.py # AgentHooks — 生命周期钩子（start/end/handoff/tool/model）
+│   └── patterns/      # 执行模式：Sequential, Swarm, Parallel, Conditional, Loop
+├── security/          # 安全体系
 │   ├── permission.py  # PermissionManager + EnhancedPermissionManager
-│   ├── sandbox.py     # Sandbox execution (3 levels)
-│   ├── file_writer.py # 2PC file writes
-│   ├── file_state.py  # File state tracking
-│   ├── audit.py       # Audit logging
-│   └── ai_permission_classifier.py  # AI-based permission classification
-├── reliability/       # Reliability system
-│   ├── circuit_breaker.py  # 4 circuit breakers + manager
-│   ├── budget.py      # Step budget + CrossModelCostTracker
-│   └── recovery.py    # Recovery manager
-├── context/           # Context management
-│   ├── context_window.py  # Token budget estimator
-│   ├── auto_compact.py    # Automatic context compaction
-│   ├── microcompactor.py  # Fine-grained compaction
-│   ├── memory.py      # .agent.md persistent memory
-│   ├── code_indexer.py    # tree-sitter AST indexing (optional)
-│   ├── reference_graph.py # networkx dependency graph (optional)
-│   └── vector_indexer.py  # LanceDB semantic search (optional)
-├── pipeline/          # Pipeline primitives
-│   ├── extractor.py   # File extraction from model output
-│   ├── prompt_builder.py  # Template-based prompt construction
-│   ├── checklist.py   # Deterministic code verification
-│   ├── retry.py       # Exponential backoff retry
-│   └── tracing.py     # TAP tracing + DPO pair generation
-├── streaming/         # Streaming execution
+│   ├── sandbox.py     # 沙箱执行（3 级）
+│   ├── file_writer.py # 2PC 文件写入
+│   ├── file_state.py  # 文件状态追踪
+│   ├── audit.py       # 审计日志
+│   └── ai_permission_classifier.py  # AI 权限分类器
+├── reliability/       # 可靠性系统
+│   ├── circuit_breaker.py  # 4 种熔断器 + 管理器
+│   ├── budget.py      # 步数预算 + CrossModelCostTracker
+│   └── recovery.py    # 恢复管理器 + DegradationChain + RateLimitHandler
+├── context/           # 上下文管理
+│   ├── context_window.py  # Token 预算估算器
+│   ├── auto_compact.py    # 自动上下文压缩
+│   ├── microcompactor.py  # 细粒度压缩
+│   ├── memory.py      # .agent.md 持久化记忆
+│   ├── code_indexer.py    # tree-sitter AST 索引（可选）
+│   ├── reference_graph.py # networkx 依赖图（可选）
+│   ├── vector_indexer.py  # LanceDB 语义搜索（可选）
+│   ├── retention_tracker.py # 上下文保留追踪
+│   ├── dependency_reporter.py # 依赖分析报告
+│   └── profiles.py    # 上下文管理配置方案
+├── pipeline/          # Pipeline 原语
+│   ├── extractor.py   # 从模型输出中提取文件
+│   ├── prompt_builder.py  # 基于模板的提示词构建
+│   ├── checklist.py   # 确定性代码验证
+│   ├── retry.py       # 指数退避重试
+│   ├── subagent_worker.py # 子 Agent Pipeline 工作器
+│   └── tracing.py     # TAP 追踪 + DPO 对生成
+├── streaming/         # 流式执行
 │   ├── streaming_executor.py  # StreamingToolExecutor
-│   └── stream_events.py      # Stream event types + parsers
-├── tools/             # Tool system
+│   └── stream_events.py      # 流事件类型 + 解析器
+├── tools/             # 工具系统
 │   ├── base.py        # BaseTool ABC + ToolResult
-│   ├── registry.py    # ToolRegistry
+│   ├── registry.py    # ToolRegistry（分类注册、意图推荐）
 │   ├── orchestrator.py # ToolOrchestrator
-│   └── desktop.py     # DesktopTool (desktop automation)
-├── router/            # Smart model routing
+│   ├── decorator.py   # @tool 装饰器 — Python 函数 → BaseTool
+│   ├── schema_gen.py  # 从函数签名自动生成 JSON Schema
+│   ├── agent_tool.py  # AgentTool — Agent-as-Tool（委托，控制权返回）
+│   ├── orchestrator_tool.py # OrchestratorTool — 嵌套多 Agent 编排作为工具
+│   ├── auth.py        # AuthScheme, AuthCredential, AuthManager
+│   ├── toolpack.py    # ToolPack — 分组工具，共享生命周期
+│   ├── mcp_toolset.py # MCPToolset — MCP 服务器连接管理
+│   ├── openapi_toolset.py # OpenAPIToolset — 从 OpenAPI 规范自动生成工具
+│   ├── result_cache.py # ResultCache — TTL + LRU 工具结果缓存
+│   ├── desktop.py     # DesktopTool（桌面自动化）
+│   ├── hub/           # ToolHubClient — 工具市场客户端
+│   └── builtin/       # 内置工具：file, code, web, analysis
+├── router/            # 智能模型路由
 │   └── model_router.py # ModelRouter, RoutingTable, PipelineManager
-├── long_horizon/      # Long-horizon autonomous tasks
-│   ├── manager.py     # LongHorizonTaskManager
+├── long_horizon/      # 长时自主任务
+│   ├── task_manager.py # LongHorizonTaskManager
 │   ├── checkpoint.py  # CheckpointStore
-│   ├── evaluator.py   # SelfEvaluator
-│   ├── strategy.py    # StrategySwitcher
-│   └── progress.py    # ProgressTracker
-├── benchmark/         # Benchmark framework
-│   └── runner.py      # BenchmarkRunner
-├── intent/            # Intent classification
+│   ├── self_evaluation.py # SelfEvaluator
+│   ├── strategy_switch.py # StrategySwitcher
+│   ├── progress.py    # ProgressTracker
+│   └── types.py       # 长时任务数据类型
+├── benchmark/         # 基准测试框架
+│   └── benchmark.py   # BenchmarkRunner
+├── intent/            # 意图分类
 │   ├── classifier.py  # IntentClassifier
 │   └── confirmation.py # ConfirmationGate
-├── hooks/             # Hook system
+├── hooks/             # Hook 系统
 │   ├── manager.py     # HookManager
-│   └── builtin/       # Built-in hooks (audit, dangerous command)
-├── coordination/      # Sub-agent coordination
-│   ├── sub_agent_manager.py  # SubAgentManager
-│   └── message_bus.py        # AgentMessageBus
-├── session/           # Session persistence
+│   └── builtin/       # 内置 Hook（审计、危险命令）
+├── coordination/      # 已废弃 — v0.2.0 迁移至 orchestration/
+│   └── __init__.py    # 仅保留废弃警告及迁移指引
+├── session/           # 会话持久化
 │   └── persistence.py # SessionPersistence (SQLite)
-├── config/            # Configuration system
-│   ├── loader.py      # Config loading + provider creation
-│   ├── teragent_config.py    # Top-level config
-│   ├── driver_config.py      # Driver config
-│   └── ...            # 15+ typed config dataclasses
-├── event_bus.py       # EventBus (signal-driven communication)
-├── utils/             # Utilities
-│   ├── exceptions.py  # Custom exceptions
-│   ├── token_counter.py # Token estimation
-│   ├── text.py        # Text utilities
-│   └── tracing.py     # Tracing utilities
-└── agent_loop.py      # AgentLoop (central orchestration)
+├── config/            # 配置系统
+│   ├── loader.py      # 配置加载 + provider 创建
+│   ├── teragent_config.py    # 顶层配置
+│   ├── driver_config.py      # Driver 配置
+│   ├── agent_config.py       # Agent 配置
+│   ├── orchestration_config.py # 编排配置
+│   ├── mcp_config.py        # MCP 服务器配置
+│   └── ...            # 15+ 类型化配置 dataclass
+├── event_bus.py       # EventBus（信号驱动通信）
+├── utils/             # 工具函数
+│   ├── exceptions.py  # 自定义异常
+│   ├── token_counter.py # Token 估算
+│   ├── text.py        # 文本工具
+│   └── tracing.py     # 追踪工具
+└── agent_loop.py      # AgentLoop（中央编排）
 ```
 
 ### 关键设计原则

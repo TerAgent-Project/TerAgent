@@ -96,6 +96,7 @@ class BaseTool(ABC):
     子类可选覆盖:
       - _safety: ToolSafety 安全级别（默认 SAFE_WRITE）
       - _concurrency_safe: 是否可并行执行（默认 False）
+      - needs_approval: 是否需要人工审批（默认 False）
       - validate_input(params) -> list[str]: 输入验证
       - check_permissions(params, level) -> (bool, str): 权限检查
       - get_tool_prompt() -> str: 工具专属提示
@@ -111,6 +112,9 @@ class BaseTool(ABC):
     _safety: ToolSafety = ToolSafety.SAFE_WRITE
     _concurrency_safe: bool = False
     _progress_callback: Optional[Callable[[str, float], Awaitable[None]]] = None
+
+    # === 审批属性（子类覆盖） ===
+    needs_approval: bool = False
 
     # === 生命周期方法 ===
 
@@ -152,22 +156,13 @@ class BaseTool(ABC):
             (allowed, reason) — 是否允许执行 + 原因
         """
         # 默认实现：根据安全级别检查权限
-        # 权限层级：READ_ONLY < SAFE_WRITE < HIGH_RISK < DESTRUCTIVE
-        # 对应最低权限要求：0 < 1 < 2 < 3
+        # 权限模型：level 0 = 只读，level >= 1 = 全部操作
+        # 安全性区分（串行执行、Hook 拦截、日志告警）由编排器/钩子处理，不由权限级别控制
         if self._safety == ToolSafety.READ_ONLY:
             return True, ""
-        if self._safety == ToolSafety.SAFE_WRITE:
-            # SAFE_WRITE 需要 PLAN 权限（level >= 1）
-            if permission_level < 1:
-                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 1）"
-        if self._safety == ToolSafety.HIGH_RISK:
-            # HIGH_RISK 需要 BYPASS 权限（level >= 2）
-            if permission_level < 2:
-                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 2）"
-        if self._safety == ToolSafety.DESTRUCTIVE:
-            # DESTRUCTIVE 需要 AUTO 权限（level >= 3）— 最危险的操作需要最高权限
-            if permission_level < 3:
-                return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 3）"
+        # 所有非只读操作（SAFE_WRITE / HIGH_RISK / DESTRUCTIVE）至少需要 level >= 1
+        if permission_level < 1:
+            return False, f"工具 {self.name} 需要更高权限（当前: {permission_level}，需要: 1）"
         return True, ""
 
     # === 属性方法 ===
@@ -248,6 +243,7 @@ class BaseTool(ABC):
             "concurrency_safe": self._concurrency_safe,
             "read_only": self.is_read_only,
             "destructive": self.is_destructive,
+            "needs_approval": self.needs_approval,
         }
 
     # === 兼容方法 ===

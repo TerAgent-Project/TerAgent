@@ -1,19 +1,20 @@
 # tests/test_config_loader.py
 """配置加载器单元测试
 
-测试 TOML 加载、新旧格式、编译器推断、管道配置等。
+测试 TOML 加载、编译器推断、管道配置等。
+（旧格式相关测试已移除 — 不再支持旧格式）
 """
 
 
 from teragent.config.driver_config import DriverConfig
 from teragent.config.loader import (
     _is_new_format,
-    _parse_old_driver_name,
     get_driver_config,
     infer_compiler,
     load_driver_configs,
     load_pipeline_config,
 )
+
 
 # ===== 编译器自动推断 =====
 
@@ -41,31 +42,7 @@ class TestInferCompiler:
         assert infer_compiler("gpt4o") == "default"
 
 
-# ===== 旧格式驱动名解析 =====
-
-class TestParseOldDriverName:
-    """旧格式驱动名解析"""
-
-    def test_known_old_names(self):
-        """已知旧格式名"""
-        adapter, identity = _parse_old_driver_name("openai_compatible")
-        assert adapter == "openai_compatible"
-        assert identity == "default"
-
-    def test_glm_driver(self):
-        """glm 驱动名"""
-        adapter, identity = _parse_old_driver_name("glm")
-        assert adapter == "openai_compatible"
-        assert identity == "glm"
-
-    def test_unknown_driver(self):
-        """未知驱动名默认 openai_compatible"""
-        adapter, identity = _parse_old_driver_name("custom_adapter")
-        assert adapter == "openai_compatible"
-        assert identity == "custom_adapter"
-
-
-# ===== 新旧格式检测 =====
+# ===== 格式检测 =====
 
 class TestFormatDetection:
     """配置格式检测"""
@@ -88,7 +65,7 @@ class TestFormatDetection:
         drivers = {
             "openai_compatible": {
                 "base_url": "https://api.example.com",
-                "api_key": "test-key",
+                "api_key_env": "GLM_KEY",
                 "model": "step-3.5",
             }
         }
@@ -106,7 +83,6 @@ class TestLoadDriverConfigs:
 
     def test_load_new_format(self, monkeypatch):
         """加载新格式配置"""
-        # 设置环境变量以提供 API key
         monkeypatch.setenv("GLM_API_KEY", "test-key-123")
 
         config = {
@@ -127,24 +103,6 @@ class TestLoadDriverConfigs:
         assert isinstance(dc, DriverConfig)
         assert dc.model == "glm-5"
         assert dc.compiler == "glm"
-
-    def test_load_old_format(self):
-        """加载旧格式配置"""
-        config = {
-            "drivers": {
-                "openai_compatible": {
-                    "base_url": "https://api.example.com",
-                    "api_key": "test-key",
-                    "model": "step-3.5",
-                }
-            }
-        }
-        drivers = load_driver_configs(config)
-        assert "openai_compatible" in drivers
-        dc = drivers["openai_compatible"]
-        assert dc.model == "step-3.5"
-        # 旧格式自动推断 compiler
-        assert dc.compiler != ""
 
     def test_load_empty_config(self):
         """空配置返回空字典"""
@@ -179,21 +137,6 @@ class TestPipelineConfig:
         pipeline = load_pipeline_config(config)
         assert pipeline["design"] == "openai_compatible.glm"
         assert pipeline["review"] == "openai_compatible.glm"
-
-    def test_load_pipeline_old_format(self):
-        """加载旧格式管道配置"""
-        config = {
-            "execution": {
-                "pipeline": {
-                    "design_model": "openai_compatible",
-                    "plan_model": "openai_compatible",
-                    "execute_model": "openai_compatible",
-                    "review_model": "openai_compatible",
-                }
-            }
-        }
-        pipeline = load_pipeline_config(config)
-        assert pipeline["design"] == "openai_compatible"
 
     def test_load_pipeline_missing(self):
         """缺少管道配置返回空字符串"""

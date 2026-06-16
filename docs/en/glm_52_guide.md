@@ -76,14 +76,14 @@ model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000          # Enable 1M context
 max_output_tokens = 128_000
-context_degradation_enabled = true       # Auto-downgrade under pressure
+# Context degradation is handled internally by the AutoCompactor
 ```
 
 ### Loading Large Context Efficiently
 
 ```python
 from teragent import create_provider, TAPRequest
-from teragent.core.context import ContextWindow
+from teragent.context import ContextWindow
 
 provider = create_provider(
     compiler="glm_52",
@@ -114,18 +114,14 @@ request = TAPRequest(
 1. **Structure your context hierarchically** — Place the most important information at the beginning and end (recency effect optimization by GLM52Compiler)
 2. **Enable context degradation** — Automatically downgrades to 200K under memory pressure
 3. **Use prefix caching** — Keep system prompts and tool definitions stable
-4. **Monitor memory usage** — Track KV cache utilization via `npu-smi info`
+4. **Monitor memory usage** — Track context utilization via `ContextWindow`
 5. **Batch related content** — Group related files or documents together rather than splitting across requests
 6. **Prefer High thinking for large context** — Max thinking with 1M context can be very slow; use High by default
 7. **Set appropriate timeouts** — 1M context requests take longer; configure `timeout` and `multimodal_timeout`
 
-### 1M Context Memory Requirements
+### 1M Context Considerations
 
-| Context Size | Recommended Hardware | KV Cache (approx.) |
-|-------------|---------------------|-------------------|
-| 200K tokens | Ascend 910B ×1 | ~16 GB |
-| 500K tokens | Ascend 910B ×1 | ~40 GB |
-| 1M tokens | Ascend 910B ×2 | ~80 GB |
+1M context consumes significantly more memory than 200K. Ensure your inference endpoint has sufficient resources, and always enable  as a safety net.
 
 ---
 
@@ -225,12 +221,9 @@ Generated code stays aligned with original plan
 
 ### Enabling PreservedThinking
 
-```toml
-[drivers.openai_compatible.glm_52]
-preserved_thinking_enabled = true
-```
+> **Note:** `preserved_thinking_enabled` is a compiler-level kwarg for `create_provider()`, not a TOML driver field. It cannot be set in `agent.toml`.
 
-Or programmatically:
+Programmatically:
 
 ```python
 from teragent import create_provider
@@ -239,7 +232,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
 ```
 
@@ -252,10 +245,8 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
-
-# Step 1: Create an architectural plan
 plan_request = TAPRequest(
     instruction="Design a real-time chat system architecture with: "
                 "(1) WebSocket connections, (2) message persistence, "
@@ -318,9 +309,11 @@ db_response = await provider.execute_tap(db_request)
 
 ### Enabling 5V-Turbo Coordination
 
+> **Note:** `vision_coordination_enabled` is a compiler-level kwarg for `create_provider()`, not a TOML driver field. In TOML, use `multimodal_enabled = true` on the GLM-5.2 driver and configure the vision model endpoint separately.
+
 ```toml
 [drivers.openai_compatible.glm_52]
-vision_coordination_enabled = true
+multimodal_enabled = true               # Enable multimodal (vision coordination)
 
 # Optional: Configure the vision model endpoint
 [drivers.openai_compatible.glm_5v_turbo]
@@ -340,10 +333,8 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
+    vision_coordination_enabled=True,  # compiler-level kwarg
 )
-
-# Vision-assisted coding task
 request = TAPRequest(
     instruction="Look at this UI mockup and implement the React component. "
                 "Follow the exact layout, colors, and typography shown.",
@@ -427,11 +418,12 @@ compiler = "glm_52"
 max_context_tokens = 1_000_000
 max_output_tokens = 128_000
 thinking_mode = "high"                    # Default thinking mode
-dual_thinking_enabled = true              # Enable High/Max switching
-preserved_thinking_enabled = true         # Enable PreservedThinking
-vision_coordination_enabled = true        # Enable 5V-Turbo coordination
+multimodal_enabled = true                 # Enable multimodal (vision coordination)
 long_horizon_enabled = true               # Enable long-horizon mode
-context_degradation_enabled = true        # Auto-downgrade 1M → 200K
+# Note: dual_thinking_enabled, preserved_thinking_enabled, vision_coordination_enabled,
+# and context_degradation_enabled are create_provider() kwargs, not TOML fields.
+# Use thinking_mode + per-request overrides for dual thinking control.
+# Context degradation is handled internally by the AutoCompactor.
 ```
 
 ### Local Deployment Configuration
@@ -443,7 +435,7 @@ api_key_env = "GLM_API_KEY"               # Or use "local" for no-auth
 model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
-context_degradation_enabled = true         # Important for limited NPU memory
+# Context degradation is handled internally by the AutoCompactor
 
 [circuit_breaker.models.glm_52]
 max_consecutive_failures = 5               # Standard threshold
@@ -460,8 +452,8 @@ model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 200_000              # Limit to 200K to save cost
 thinking_mode = "high"                    # Avoid Max mode to save tokens
-preserved_thinking_enabled = false        # Disable to reduce token overhead
-vision_coordination_enabled = false       # Disable to avoid 5V-Turbo costs
+# Note: preserved_thinking_enabled and vision_coordination_enabled are
+# create_provider() kwargs, not TOML fields. Simply don't pass them to disable.
 ```
 
 ---
@@ -475,7 +467,7 @@ vision_coordination_enabled = false       # Disable to avoid 5V-Turbo costs
 3. **Enable prefix caching** — Keep system prompts consistent across requests
 4. **Batch related queries** — Process multiple related items in one request rather than many small ones
 5. **Set appropriate timeouts** — 1M context requests may take 30-60 seconds
-6. **Monitor KV cache utilization** — High utilization indicates good cache efficiency
+6. **Monitor context utilization** — High utilization indicates efficient use of the context window
 7. **Use context degradation** — Automatically handles memory pressure
 
 ### Stability Considerations
@@ -498,8 +490,8 @@ provider = create_provider(
     model="glm-5.2",
     max_context_tokens=500_000,          # Reduce from 1M to 500K
     thinking_mode="high",                # Avoid Max mode (less thinking tokens)
-    preserved_thinking_enabled=False,    # Disable to save context space
-    context_degradation_enabled=True,    # Auto-downgrade when memory is tight
+    preserved_thinking_enabled=False,    # compiler-level kwarg; disable to save context space
+    context_degradation_enabled=True,    # compiler-level kwarg; auto-downgrade when memory is tight
 )
 ```
 
@@ -513,7 +505,7 @@ GLM-5.2 supports automatic context degradation when the system is under memory p
 
 ```
 1M Context (full capacity)
-    ↓ Memory pressure detected (NPU > 90% utilization)
+    ↓ Memory pressure detected (threshold exceeded)
 200K Context (degraded mode)
     ↓ Memory pressure resolved
 1M Context (recovered)
@@ -521,17 +513,11 @@ GLM-5.2 supports automatic context degradation when the system is under memory p
 
 ### Configuring Degradation
 
-```toml
-[drivers.openai_compatible.glm_52]
-context_degradation_enabled = true
-context_degradation_threshold = 0.90     # Trigger at 90% NPU memory utilization
-context_degradation_target = 200_000     # Downgrade to 200K context
-context_degradation_recovery_threshold = 0.70  # Recover when memory < 70%
-```
+> **Note:** Context degradation is handled internally by the AutoCompactor. The fields `context_degradation_enabled`, `context_degradation_threshold`, `context_degradation_target`, and `context_degradation_recovery_threshold` are **not** valid TOML driver config fields — they are compiler-level kwargs for `create_provider()`. In TOML, simply set `max_context_tokens = 1_000_000` and the AutoCompactor will handle degradation automatically.
 
 ### What Happens During Degradation
 
-1. **Trigger**: NPU memory utilization exceeds the threshold
+1. **Trigger**: Memory utilization exceeds the configured threshold
 2. **Downgrade**: Maximum context is reduced from 1M to 200K
 3. **Context compaction**: Existing context is compressed to fit within 200K
 4. **Information retention**: The GLM52Compiler preserves the most important context (system prompt, recent messages, tool definitions)
@@ -541,20 +527,12 @@ context_degradation_recovery_threshold = 0.70  # Recover when memory < 70%
 ### Monitoring Degradation
 
 ```python
-from teragent.reliability.context_degradation import ContextDegradationMonitor
+from teragent.context import ContextWindow
 
-monitor = ContextDegradationMonitor(model_name="glm_52")
-
-# Check current state
-state = monitor.get_state()
-print(f"Current mode: {state.current_mode}")  # "1M" or "200K"
-print(f"NPU utilization: {state.npu_utilization:.1%}")
-print(f"Degradation count: {state.degradation_count}")
-
-# Get degradation history
-for event in monitor.get_history():
-    print(f"[{event.timestamp}] {event.from_mode} → {event.to_mode} "
-          f"(NPU: {event.npu_utilization:.1%})")
+# The ContextWindow tracks utilization
+utilization = context_window.usage_ratio()
+if utilization > 0.9:
+    print("⚠️ Context utilization high, consider enabling auto-compaction")
 ```
 
 ---
@@ -599,31 +577,31 @@ review_driver = "openai_compatible.glm_5"             # GLM-5 for review (200K s
 
 | Metric | Tool | Threshold |
 |--------|------|-----------|
-| NPU memory utilization | `npu-smi info` | > 90% triggers degradation |
-| KV cache utilization | Inference server metrics | > 85% indicates pressure |
 | Request latency | TerAgent logs | > 60s for 1M context |
 | Thinking mode token usage | CostTracker | Max mode: 3-5x vs High |
-| Context degradation events | ContextDegradationMonitor | Any event warrants investigation |
+| Context degradation events | ContextWindow / AutoCompactor | Any event warrants investigation |
 | 5V-Turbo availability | Circuit breaker state | Open = vision unavailable |
 | Checkpoint size | File system | > 100MB per checkpoint |
 
 ### Setting Up Alerts
 
 ```python
-from teragent.reliability.context_degradation import ContextDegradationMonitor
+from teragent.context import ContextWindow
 from teragent.reliability.circuit_breaker import ModelCircuitBreakerManager
 
-# Monitor degradation
-degradation_monitor = ContextDegradationMonitor(model_name="glm_52")
+# Monitor context utilization
+utilization = context_window.usage_ratio()
+if utilization > 0.9:
+    print("⚠️ Context utilization high, consider enabling auto-compaction")
 
 # Monitor circuit breaker
 breaker_manager = ModelCircuitBreakerManager()
 
 # Custom alert logic
 async def check_health():
-    state = degradation_monitor.get_state()
-    if state.current_mode == "200K":
-        print("⚠️ GLM-5.2 running in degraded mode (200K context)")
+    utilization = context_window.usage_ratio()
+    if utilization > 0.9:
+        print("⚠️ Context utilization high, consider enabling auto-compaction")
 
     breaker_state = breaker_manager.get_state("glm_52")
     if breaker_state == "open":
@@ -656,13 +634,12 @@ adapter = OpenAICompatibleAdapter(
 
 ### Context Degradation Triggering Too Often
 
-**Cause**: NPU memory is insufficient for 1M context.
+**Cause**: The inference endpoint has insufficient memory for 1M context.
 
 **Solution**:
 1. Reduce `max_context_tokens` to 500K or 200K
-2. Add more NPU memory (Ascend 910B ×2 recommended)
-3. Reduce concurrent sequences (`max-num-seqs`)
-4. Enable prefix caching to reduce memory overhead
+2. Ensure your inference endpoint has sufficient resources for 1M context
+3. Enable prefix caching to reduce memory overhead
 
 ### PreservedThinking Consuming Too Many Tokens
 
@@ -685,13 +662,12 @@ adapter = OpenAICompatibleAdapter(
 
 ### GLM-5.2 Not Using 1M Context
 
-**Cause**: The inference server may not support 1M context.
+**Cause**: The inference endpoint may not support 1M context.
 
 **Solution**:
-1. Check inference server configuration: `--max-model-len 1000000`
-2. Verify NPU memory is sufficient
-3. Ensure `max_context_tokens = 1_000_000` in driver config
-4. Check inference server logs for context truncation warnings
+1. Ensure `max_context_tokens = 1_000_000` in driver config
+2. Verify your inference endpoint supports 1M context and is configured accordingly
+3. Check endpoint response for context truncation warnings
 
 ---
 

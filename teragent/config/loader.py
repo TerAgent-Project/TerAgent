@@ -1,8 +1,6 @@
-"""teragent.config.loader — Configuration loading with new and old format support
+"""teragent.config.loader — Configuration loading
 
-Supports two config formats in agent.toml:
-
-## New format (protocol.identity two-level structure):
+Supports the protocol.identity two-level driver config format in agent.toml:
 
     [drivers.openai_compatible.glm_5]
     base_url = "https://open.bigmodel.cn/api/paas/v4"
@@ -16,21 +14,10 @@ Supports two config formats in agent.toml:
     model = "claude-sonnet-4-20250514"
     compiler = "anthropic"
 
-## Old format (flat structure, still supported with auto-inference):
-
-    [drivers.openai_compatible]
-    base_url = "https://integrate.api.nvidia.com/v1"
-    api_key = "nvapi-..."
-    model = "stepfun-ai/step-3.5-flash"
-
-The loader automatically detects which format is being used and handles both.
-For old format, compiler is auto-inferred from the identity/adapter name.
-
 ## API Key resolution priority (Phase 9):
 1. Environment variable referenced by `api_key_env`
 2. .env file (if python-dotenv is available)
-3. Explicit `api_key` in config (DEPRECATED — emits warning)
-4. Empty string (warning logged)
+3. Empty string (warning logged)
 
 ## Pipeline config:
 
@@ -39,14 +26,6 @@ For old format, compiler is auto-inferred from the identity/adapter name.
     plan_driver = "openai_compatible.glm_5"
     execute_driver = "openai_compatible.glm_5"
     review_driver = "openai_compatible.glm_5"
-
-Old format also supported:
-
-    [execution.pipeline]
-    design_model = "openai_compatible"
-    plan_model = "openai_compatible"
-    execute_model = "openai_compatible"
-    review_model = "openai_compatible"
 """
 
 from __future__ import annotations
@@ -88,7 +67,7 @@ def resolve_api_key(
 ) -> tuple[str, str]:
     """Resolve API key from config settings.
 
-    Priority (Phase 9): env var > .env file > plaintext api_key (DEPRECATED) > empty
+    Priority (Phase 9): env var > .env file > empty
 
     This function delegates to ApiKeyVault.resolve_from_settings() for
     consistent security handling across the library.
@@ -111,7 +90,7 @@ def resolve_api_key_detailed(
     """Resolve API key from config settings with detailed result.
 
     Same as resolve_api_key() but returns a ResolvedKey object with
-    additional metadata (source, provider, is_plaintext, etc.).
+    additional metadata (source, provider, etc.).
 
     Args:
         settings: Driver settings dict from TOML config
@@ -144,17 +123,6 @@ _COMPILER_INFERENCE_MAP: dict[str, str] = {
     "qwen": "default",
 }
 
-# Map of old driver name → (adapter, identity)
-_OLD_DRIVER_NAME_MAP: dict[str, tuple[str, str]] = {
-    "openai_compatible": ("openai_compatible", "default"),
-    "anthropic_compatible": ("anthropic_native", "claude"),
-    "minimax_native": ("minimax_native", "minimax"),
-    "minimax": ("minimax_native", "minimax"),
-    "glm": ("openai_compatible", "glm"),
-    "mock": ("mock", "mock"),
-}
-
-
 def infer_compiler(identity: str, adapter: str = "") -> str:
     """Auto-infer compiler from model identity.
 
@@ -179,76 +147,49 @@ def infer_compiler(identity: str, adapter: str = "") -> str:
     return "default"
 
 
-def _parse_old_driver_name(driver_name: str) -> tuple[str, str]:
-    """Parse old flat driver name into (adapter, identity).
-
-    Args:
-        driver_name: Old-style driver name like "openai_compatible", "glm", "anthropic_compatible"
-
-    Returns:
-        (adapter, identity) tuple
-    """
-    if driver_name in _OLD_DRIVER_NAME_MAP:
-        return _OLD_DRIVER_NAME_MAP[driver_name]
-
-    # Unknown driver — treat as openai_compatible with the name as identity
-    return ("openai_compatible", driver_name)
-
-
 # ===== Config Loading =====
 
 def _is_new_format(drivers_section: dict[str, Any]) -> bool:
-    """Detect whether the drivers section uses new two-level format.
+    """Detect whether the drivers section uses the two-level format.
 
-    New format: [drivers.protocol.identity] where values are dicts containing
+    Two-level format: [drivers.protocol.identity] where values are dicts containing
     model/compiler/etc.
-
-    Old format: [drivers.name] where values are dicts containing
-    base_url/api_key/model but NOT nested identity dicts.
     """
     for key, value in drivers_section.items():
         if not isinstance(value, dict):
             continue
         # Check if any value in this dict is itself a dict (nested identity)
         for sub_key, sub_value in value.items():
-            if isinstance(sub_value, dict):
-                # It's a nested structure → new format
-                # But we need to distinguish from old format's extra_headers (which is also a dict)
-                # New format identity dicts contain model/compiler keys
-                if isinstance(sub_value, dict) and (
-                    "model" in sub_value
-                    or "compiler" in sub_value
-                    or "base_url" in sub_value
-                    or "api_key_env" in sub_value
-                ):
-                    return True
+            if isinstance(sub_value, dict) and (
+                "model" in sub_value
+                or "compiler" in sub_value
+                or "base_url" in sub_value
+                or "api_key_env" in sub_value
+            ):
+                return True
     return False
 
 
 def load_driver_configs(config: dict[str, Any]) -> dict[str, DriverConfig]:
     """Load all driver configurations from a TOML config dict.
 
-    Automatically detects and supports both old (flat) and new (two-level) formats.
+    Expects the protocol.identity two-level format in agent.toml.
 
     Args:
         config: The full TOML config dict (from tomllib.load or similar)
 
     Returns:
         Dict mapping full_name (e.g., "openai_compatible.glm_5") to DriverConfig instances.
-        For old format, the full_name may be just the adapter name (e.g., "openai_compatible").
     """
     drivers_section = config.get("drivers", {})
     if not drivers_section:
         return {}
 
-    if _is_new_format(drivers_section):
-        return _load_new_format(drivers_section)
-    else:
-        return _load_old_format(drivers_section)
+    return _load_new_format(drivers_section)
 
 
 def _load_new_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]:
-    """Load drivers using new protocol.identity two-level format.
+    """Load drivers using protocol.identity two-level format.
 
     Example TOML:
         [drivers.openai_compatible.glm_5]
@@ -308,90 +249,17 @@ def _load_new_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]
     return drivers
 
 
-def _load_old_format(drivers_section: dict[str, Any]) -> dict[str, DriverConfig]:
-    """Load drivers using old flat format (backward compatibility).
-
-    Example TOML:
-        [drivers.openai_compatible]
-        base_url = "https://integrate.api.nvidia.com/v1"
-        api_key = "nvapi-..."
-        model = "stepfun-ai/step-3.5-flash"
-
-    Auto-infers compiler and adapter from the driver name.
-    """
-    drivers: dict[str, DriverConfig] = {}
-
-    for driver_name, settings in drivers_section.items():
-        if not isinstance(settings, dict):
-            continue
-
-        # Parse old driver name → (adapter, identity)
-        adapter, identity = _parse_old_driver_name(driver_name)
-
-        # Use driver_name as full_name for backward compat
-        full_name = driver_name
-
-        api_key, api_key_env = resolve_api_key(settings, full_name=full_name)
-
-        # Auto-infer compiler
-        compiler = settings.get("compiler", "")
-        if not compiler:
-            compiler = infer_compiler(identity, adapter=adapter)
-
-        drivers[full_name] = DriverConfig(
-            adapter=adapter,
-            identity=identity,
-            base_url=settings.get("base_url", ""),
-            api_key=api_key,
-            model=settings.get("model", ""),
-            compiler=compiler,
-            timeout=float(settings.get("timeout", 300.0)),
-            extra_headers=settings.get("extra_headers", {}),
-            full_name=full_name,
-            api_key_env=api_key_env,
-            enable_fake_tools=settings.get("enable_fake_tools", False),
-            # Extended fields for V4/M3/GLM-5
-            compiler_variant=settings.get("compiler_variant", ""),
-            max_context_tokens=int(settings.get("max_context_tokens", 0)),
-            max_output_tokens=int(settings.get("max_output_tokens", 0)),
-            thinking_mode=settings.get("thinking_mode", ""),
-            cache_aware=settings.get("cache_aware", False),
-            multimodal_enabled=settings.get("multimodal_enabled", False),
-            desktop_enabled=settings.get("desktop_enabled", False),
-            long_horizon_enabled=settings.get("long_horizon_enabled", False),
-            msa_efficient=settings.get("msa_efficient", False),
-        )
-
-        logger.info(
-            f"Loaded driver [{full_name}] (old format, auto-inferred): "
-            f"adapter={adapter}, identity={identity}, compiler={compiler}, "
-            f"model={settings.get('model', '(empty)')}, "
-            f"api_key={mask_api_key(api_key)}"
-        )
-
-    return drivers
-
-
 # ===== Pipeline Config =====
 
 def load_pipeline_config(config: dict[str, Any]) -> dict[str, str]:
     """Load execution pipeline driver assignments.
 
-    Supports both old and new config formats:
-
-    New format:
+    Config format:
         [execution.pipeline]
         design_driver = "openai_compatible.glm_5"
         plan_driver = "openai_compatible.glm_5"
         execute_driver = "openai_compatible.glm_5"
         review_driver = "openai_compatible.glm_5"
-
-    Old format:
-        [execution.pipeline]
-        design_model = "openai_compatible"
-        plan_model = "openai_compatible"
-        execute_model = "openai_compatible"
-        review_model = "openai_compatible"
 
     Returns:
         Dict with keys: "design", "plan", "execute", "review"
@@ -405,26 +273,15 @@ def load_pipeline_config(config: dict[str, Any]) -> dict[str, str]:
 
     result: dict[str, str] = {}
 
-    # New format keys (preferred)
-    new_keys = {
+    keys = {
         "design": "design_driver",
         "plan": "plan_driver",
         "execute": "execute_driver",
         "review": "review_driver",
     }
 
-    # Old format keys (backward compat)
-    old_keys = {
-        "design": "design_model",
-        "plan": "plan_model",
-        "execute": "execute_model",
-        "review": "review_model",
-    }
-
-    for stage, new_key in new_keys.items():
-        old_key = old_keys[stage]
-        # Prefer new key, fall back to old key
-        driver_name = pipeline.get(new_key, "") or pipeline.get(old_key, "")
+    for stage, key in keys.items():
+        driver_name = pipeline.get(key, "")
         result[stage] = driver_name
 
     return result

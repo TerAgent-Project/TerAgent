@@ -50,6 +50,10 @@ Key functions:
 # AgentLoop config (Phase 0.1 migrated)
 from teragent.config.agent_loop_config import AgentLoopConfig
 
+# Orchestration config (Phase 1 W2)
+from teragent.config.agent_config import AgentConfig
+from teragent.config.orchestration_config import OrchestrationConfig
+
 # Phase 9: API Key Security
 from teragent.config.api_key_security import (
     ApiKeyVault,
@@ -102,6 +106,9 @@ from teragent.config.streaming_config import StreamingConfig
 from teragent.config.teragent_config import AgentdSectionConfig, TerAgentConfig
 from teragent.config.tools_config import ToolsConfig
 
+# Phase 2 W5: MCP Config
+from teragent.config.mcp_config import MCPServerConfig
+
 __all__ = [
     # Top-level config
     "TerAgentConfig",
@@ -127,6 +134,9 @@ __all__ = [
     "ModelFallbackConfig",
     # AgentLoop config (Phase 0.1 migrated)
     "AgentLoopConfig",
+    # Orchestration config (Phase 1 W2)
+    "AgentConfig",
+    "OrchestrationConfig",
     # Loader functions
     "load_typed_config",
     "load_driver_configs",
@@ -149,4 +159,6 @@ __all__ = [
     "audit_api_key_security",
     "audit_env_file",
     "get_vault",
+    # MCP Config (Phase 2 W5)
+    "MCPServerConfig",
 ]

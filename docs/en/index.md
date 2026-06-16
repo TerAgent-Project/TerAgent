@@ -18,12 +18,6 @@ Welcome to the TerAgent documentation. TerAgent is a Python library for building
 | [Long-Horizon Task Guide](long_horizon_guide.md) | 8-hour+ autonomous tasks with GLM-5/5.2 |
 | [Multimodal Guide](multimodal_guide.md) | Image, video, and desktop operations with MiniMax M3 |
 
-## Reports & Deployment
-
-- [Four-Model Evaluation Report](../EVALUATION_FOUR_MODELS.md) — Comprehensive benchmark results for V4/M3/GLM-5/GLM-5.2
-- [GLM-5.2 Stability Report](../glm_52_stability_report.md) — Production stability verification
-- [Ascend Deployment Guide](../deployment_guide_ascend.md) — Deploying TerAgent on Huawei Ascend NPU
-
 ## API Reference
 
 - [Complete API Reference](api-reference.md) — Module-by-module reference with code examples
@@ -32,4 +26,4 @@ Welcome to the TerAgent documentation. TerAgent is a Python library for building
 
 - **Project**: [GitHub](https://github.com/teragent/teragent)
 - **License**: Apache License Version 2.0
-- **Version**: 0.1.3
+- **Version**: 0.2.0

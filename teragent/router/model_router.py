@@ -508,10 +508,10 @@ class PipelineManager:
         pipeline_section = config.get("execution", {}).get("pipeline", {})
         if pipeline_section:
             # Extract base stage → driver mappings
-            design = pipeline_section.get("design_driver", "") or pipeline_section.get("design_model", "")
-            plan = pipeline_section.get("plan_driver", "") or pipeline_section.get("plan_model", "")
-            execute = pipeline_section.get("execute_driver", "") or pipeline_section.get("execute_model", "")
-            review = pipeline_section.get("review_driver", "") or pipeline_section.get("review_model", "")
+            design = pipeline_section.get("design_driver", "")
+            plan = pipeline_section.get("plan_driver", "")
+            execute = pipeline_section.get("execute_driver", "")
+            review = pipeline_section.get("review_driver", "")
 
             if design or plan or execute or review:
                 pm.register_profile(PipelineProfile(

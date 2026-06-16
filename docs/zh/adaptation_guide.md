@@ -159,11 +159,10 @@ compiler = "glm_52"
 max_context_tokens = 1_000_000          # GLM-5.2 支持 1M 上下文
 max_output_tokens = 128_000
 thinking_mode = "high"                  # 默认："high"（标准深度推理）
-dual_thinking_enabled = true            # 启用 High/Max 双思考模式
-preserved_thinking_enabled = true       # 启用 PreservedThinking（编码计划保持）
-vision_coordination_enabled = true      # 启用 5V-Turbo 视觉协调
+multimodal_enabled = true               # 启用多模态（视觉协调）
 long_horizon_enabled = true             # GLM-5.2 也支持长程任务
-context_degradation_enabled = true      # 压力下自动降级 1M → 200K
+# 注意：dual_thinking、preserved_thinking、vision_coordination、context_degradation
+# 是 create_provider() 的 kwargs，不是 TOML 驱动字段。
 
 # =============================================================================
 # 执行流水线 — 多模型协作
@@ -377,7 +376,7 @@ glm_provider = create_provider(
 # 长程任务配置
 request = TAPRequest(
     instruction="实现一个完整的用户管理系统，包含认证、角色和审计日志",
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=4,
         checkpoint_interval_minutes=15,
         evaluation_interval_steps=10,
@@ -411,7 +410,7 @@ glm52_provider = create_provider(
 # 1M 上下文 + 双思考模式
 request = TAPRequest(
     instruction="分析整个代码库并设计微服务迁移方案",
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=6,
         checkpoint_interval_minutes=20,
     ),
@@ -461,7 +460,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,
+    preserved_thinking_enabled=True,  # 编译器级 kwargs
 )
 
 # 第一次请求：创建编码计划
@@ -484,7 +483,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
+    vision_coordination_enabled=True,  # 编译器级 kwargs
 )
 
 # 视觉→代码→验证循环
@@ -549,9 +548,10 @@ api_key_env = "GLM_API_KEY"
 model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
-dual_thinking_enabled = true
-preserved_thinking_enabled = true
-vision_coordination_enabled = true
+thinking_mode = "high"
+multimodal_enabled = true
+# 注意：preserved_thinking_enabled 和 vision_coordination_enabled
+# 是 create_provider() 的 kwargs，不是 TOML 驱动字段。
 ```
 
 ### 步骤 2：更新流水线配置
@@ -663,7 +663,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
+    vision_coordination_enabled=True,  # 编译器级 kwargs
 )
 
 request = TAPRequest(
@@ -761,31 +761,31 @@ GLM-5 的上下文窗口为 200K tokens。如果请求超过此限制：
 
 如果 1M 上下文消耗过多内存：
 
-**解决方案**：在 GLM-5.2 驱动配置中启用 `context_degradation_enabled = true`。这允许在内存压力下自动降级到 200K 上下文。同时确保推理服务器有足够的 NPU 内存（推荐：Ascend 910B ×2 用于 1M 上下文）。
+**解决方案**：上下文降级由 AutoCompactor 内部处理。确保 GLM-5.2 驱动配置中设置了 `max_context_tokens = 1_000_000`。同时确保推理端点有足够资源支持 1M 上下文。
 
 ### 双思考模式未激活
 
 如果 High/Max 思考模式未正确切换：
 
-**解决方案**：确认驱动配置中 `dual_thinking_enabled = true`。检查 `GLM52Compiler` 已注册并选中。思考模式可通过驱动配置的 `thinking_mode` 设置，或通过 `meta={"thinking_mode": "max"}` 按请求覆盖。
+**解决方案**：双思考通过驱动配置中的 `thinking_mode`（TOML 字段）或通过 `meta={"thinking_mode": "max"}` 按请求控制。`dual_thinking_enabled` kwargs 仅用于 `create_provider()`（编译器级），不是 TOML 字段。检查 `GLM52Compiler` 已注册并选中。
 
 ### 5V-Turbo 视觉协调失败
 
 如果 GLM-5V-Turbo 与 GLM-5.2 的视觉协调不工作：
 
-**解决方案**：确保 `vision_coordination_enabled = true` 已设置。检查 GLM-5V-Turbo 服务可访问。验证 `GLM52Compiler` 支持视觉协调模式。5V-Turbo 不可用时，系统会降级到纯文本分析。
+**解决方案**：`vision_coordination_enabled` 是 `create_provider()` 的 kwargs，不是 TOML 字段。在 TOML 中，请在 GLM-5.2 驱动上使用 `multimodal_enabled = true`。检查 GLM-5V-Turbo 服务可访问。验证 `GLM52Compiler` 支持视觉协调模式。5V-Turbo 不可用时，系统会降级到纯文本分析。
 
 ### PreservedThinking 上下文丢失
 
 如果 PreservedThinking 在会话间丢失上下文：
 
-**解决方案**：PreservedThinking 设计用于会话内连续性，不跨会话持久化。跨会话工作时，在新会话的目标描述中包含计划摘要。确认 `preserved_thinking_enabled = true` 已设置。
+**解决方案**：PreservedThinking 设计用于会话内连续性，不跨会话持久化。跨会话工作时，在新会话的目标描述中包含计划摘要。`preserved_thinking_enabled` 是 `create_provider()` 的 kwargs（不是 TOML 字段）；通过编程方式创建 provider 时传递。
 
 ### 多模态内容未处理
 
 如果 M3 不可用，其他编译器会将多模态内容降级为文本描述。
 
-**解决方案**：确保 M3 驱动已配置且 API 密钥有效。检查路由配置。对于 GLM-5.2 视觉任务，启用 `vision_coordination_enabled = true`。
+**解决方案**：确保 M3 驱动已配置且 API 密钥有效。检查路由配置。对于 GLM-5.2 视觉任务，向 `create_provider()` 传递 `vision_coordination_enabled=True` 或在 TOML 中设置 `multimodal_enabled = true`。
 
 ### 预算控制下成本仍然高
 
@@ -847,17 +847,6 @@ manager = ModelCircuitBreakerManager(configs=[
 命名配置：   [execution.pipeline.profiles.<name>]
 ```
 
-### 端口分配（本地部署）
-
-| 端口 | 服务 |
-|------|------|
-| 8001 | GLM-5 推理 |
-| 8002 | DeepSeek V4 Flash 推理 |
-| 8003 | MiniMax M3 推理 |
-| 8004 | GLM-5.2 推理 |
-| 8005 | DeepSeek V4 Pro 推理 |
-| 8010 | 桌面操作 API |
-
 ---
 
-*本指南是 TerAgent 文档的一部分。如需模型专属深入指南，请参阅 [GLM-5.2 指南](../en/glm_52_guide.md)、[长程任务指南](../en/long_horizon_guide.md) 和 [多模态指南](../en/multimodal_guide.md)。*
+*本指南是 TerAgent 文档的一部分。如需模型专属深入指南，请参阅 [GLM-5.2 指南](glm_52_guide.md)、[长程任务指南](long_horizon_guide.md) 和 [多模态指南](multimodal_guide.md)。*

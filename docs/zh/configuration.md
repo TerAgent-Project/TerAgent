@@ -183,7 +183,6 @@ max_output_tokens = 384_000
 multimodal_enabled = true               # 启用多模态（图像+视频）
 desktop_enabled = true                  # 启用桌面操作
 msa_efficient = true                    # MSA 全文注入模式
-group_id = ""                           # 可选 MiniMax Group ID
 ```
 
 | 字段 | 类型 | 默认值 | 描述 |
@@ -195,7 +194,6 @@ group_id = ""                           # 可选 MiniMax Group ID
 | `multimodal_enabled` | bool | `false` | 启用原生多模态支持 |
 | `desktop_enabled` | bool | `false` | 启用桌面操作支持 |
 | `msa_efficient` | bool | `false` | 启用 MSA 全文注入 |
-| `group_id` | string | `""` | MiniMax Group ID（某些端点需要） |
 
 ### GLM-5 驱动
 
@@ -229,11 +227,11 @@ compiler = "glm_52"
 max_context_tokens = 1_000_000          # GLM-5.2 支持 1M 上下文
 max_output_tokens = 128_000
 thinking_mode = "high"                  # 默认："high"（对比 "max" 深度推理）
-dual_thinking_enabled = true            # 启用 High/Max 双思考模式
-preserved_thinking_enabled = true       # 启用 PreservedThinking 用于编码计划
-vision_coordination_enabled = true      # 启用 5V-Turbo 视觉协调
+multimodal_enabled = true               # 启用多模态（视觉协调）
 long_horizon_enabled = true             # GLM-5.2 也支持长时任务
-context_degradation_enabled = true      # 内存压力下自动降级 1M → 200K
+# 注意：dual_thinking、preserved_thinking、vision_coordination、context_degradation
+# 是 create_provider() 的编译器级 kwargs，不是 TOML 驱动字段。
+# 使用 thinking_mode 和按请求覆盖来控制双思考模式。
 ```
 
 | 字段 | 类型 | 默认值 | 描述 |
@@ -242,10 +240,10 @@ context_degradation_enabled = true      # 内存压力下自动降级 1M → 200
 | `compiler` | string | — | 必须为 `"glm_52"` |
 | `max_context_tokens` | int | `1_000_000` | GLM-5.2 上下文窗口（1M） |
 | `thinking_mode` | string | `"high"` | 默认思考模式：`high` 或 `max` |
-| `dual_thinking_enabled` | bool | `false` | 启用 High/Max 双思考模式 |
-| `preserved_thinking_enabled` | bool | `false` | 启用 PreservedThinking 用于编码计划 |
-| `vision_coordination_enabled` | bool | `false` | 启用 5V-Turbo 视觉协调 |
-| `context_degradation_enabled` | bool | `false` | 内存压力下自动降级 1M → 200K |
+| `multimodal_enabled` | bool | `false` | 启用多模态内容（视觉协调） |
+| `long_horizon_enabled` | bool | `false` | 启用长时自主模式 |
+
+> **注意：** 双思考、PreservedThinking、视觉协调和上下文降级等功能通过编译器级 kwargs 传递给 `create_provider()`，而不是通过 TOML 驱动字段。在 TOML 配置中，使用 `thinking_mode` 设置默认思考深度，并通过 `meta={"thinking_mode": "max"}` 按请求覆盖。上下文降级由 AutoCompactor 内部处理。
 
 ### GLM-5V-Turbo 驱动（用于视觉协调）
 
@@ -273,8 +271,9 @@ model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
 thinking_mode = "high"
-dual_thinking_enabled = true
-preserved_thinking_enabled = true
+multimodal_enabled = true
+# 注意：preserved_thinking_enabled 和 vision_coordination_enabled
+# 是 create_provider() 的 kwargs，不是 TOML 驱动字段。
 ```
 
 ### MiniMaxNative 驱动
@@ -289,7 +288,6 @@ max_context_tokens = 1_000_000
 multimodal_enabled = true
 desktop_enabled = true
 msa_efficient = true
-group_id = ""
 ```
 
 ## 智能路由配置
@@ -605,7 +603,6 @@ max_output_tokens = 384_000
 multimodal_enabled = true
 desktop_enabled = true
 msa_efficient = true
-group_id = ""
 
 [drivers.openai_compatible.glm_5]
 base_url = "https://open.bigmodel.cn/api/paas/v4"

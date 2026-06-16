@@ -85,16 +85,16 @@ TerAgent 的可靠性系统默认为 **建议性而非阻塞性**：
    └────────┬────────┘  └─────────────────┘
             │
    ┌────────▼────────┐  ┌─────────────────┐  ┌──────────────────────┐
-   │   Pipeline       │  │   Context       │  │   Coordination       │
+   │   Pipeline       │  │   Context       │  │   Orchestration      │
    │                 │  │                 │  │                      │
-   │ Extractor       │  │ ContextWindow   │  │ SubAgentManager      │
-   │ PromptBuilder   │  │ AutoCompactor   │  │ AgentMessageBus      │
-   │ Checklist       │  │ Microcompactor  │  │                      │
-   │ Retry           │  │ CodeIndexer*    │  └──────────────────────┘
-   │ TAPTracer       │  │ ReferenceGraph* │
-   └─────────────────┘  │ VectorIndexer*  │
-                        └─────────────────┘
-                        (* optional dependencies)
+   │ Extractor       │  │ ContextWindow   │  │ Agent                │
+   │ PromptBuilder   │  │ AutoCompactor   │  │ Orchestrator         │
+   │ Checklist       │  │ Microcompactor  │  │ Handoff              │
+   │ Retry           │  │ CodeIndexer*    │  │ SharedState          │
+   │ TAPTracer       │  │ ReferenceGraph* │  │ CancellationToken   │
+   └─────────────────┘  │ VectorIndexer*  │  │ Guardrail / Approval │
+                        └─────────────────┘  │ 5 Patterns           │
+                        (* optional deps)    └──────────────────────┘
 
    ┌──────────────────────┐  ┌──────────────────────────────────────┐
    │   Router             │  │   Long-Horizon                       │
@@ -179,7 +179,7 @@ User Input
         │
         ▼
 ┌──────────────────┐
-│ SubAgent Deleg.   │  (if CREATE_PROJECT + SubAgentManager)
+│ Orchestrator      │  (if multi-agent configured)
 └───────┬──────────┘
         │
         ▼
@@ -289,8 +289,10 @@ AgentLoop
     ├── SessionPersistence (SQLite via aiosqlite)
     └── EventBus (shared across components)
 
-SubAgentManager
-    ├── ModelProvider (shared reference)
-    ├── ToolRegistry (shared reference)
-    └── AgentMessageBus (shared reference)
+Orchestrator
+    ├── Agent 实例（独立的 provider、工具集、handoff）
+    ├── OrchestrationPattern（Sequential / Swarm / Parallel / Conditional / Loop）
+    ├── SharedState（作用域：session / agent / global）
+    ├── RunContext + UsageTracker
+    └── CancellationToken（线程安全协作式取消）
 ```

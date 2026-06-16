@@ -10,9 +10,8 @@ Centralized API key management with:
 Design principles:
 1. API keys are NEVER logged or printed in plaintext
 2. All key resolution goes through a single code path
-3. Plaintext keys in config files are flagged with deprecation warnings
-4. Environment variables and .env files are the recommended approach
-5. Security audit can scan configs and report issues
+3. Environment variables and .env files are the only supported approach
+4. Security audit can scan configs and report issues
 
 Usage::
 
@@ -36,7 +35,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -194,13 +192,11 @@ class ResolvedKey:
         source: Where the key came from
         env_var: The environment variable name used (if applicable)
         provider: Detected provider name (if identifiable)
-        is_plaintext: Whether the key came from a plaintext config value
     """
     key: str = ""
-    source: str = "none"  # "env" | "dotenv" | "plaintext" | "direct" | "none"
+    source: str = "none"  # "env" | "dotenv" | "direct" | "none"
     env_var: str = ""
     provider: str | None = None
-    is_plaintext: bool = False
 
     @property
     def found(self) -> bool:
@@ -217,8 +213,7 @@ class ResolvedKey:
             f"ResolvedKey(source={self.source!r}, "
             f"env_var={self.env_var!r}, "
             f"key={self.masked!r}, "
-            f"provider={self.provider!r}, "
-            f"is_plaintext={self.is_plaintext})"
+            f"provider={self.provider!r})"
         )
 
 
@@ -231,14 +226,11 @@ class ApiKeyVault:
     Resolution priority (resolve_from_settings() only):
         1. Environment variable (os.getenv)
         2. .env file (python-dotenv)
-        3. Plaintext in config (DEPRECATED, emits warning)
 
     Note: resolve() only uses priorities 1 and 2 (env var + .env).
-    It does NOT fall back to plaintext config.
 
     Features:
         - Keys are stored securely and never exposed in repr/str
-        - Plaintext keys trigger deprecation warnings
         - Security audit capabilities
         - Key validation
 
@@ -270,7 +262,7 @@ class ApiKeyVault:
 
         Args:
             strict_mode: If True, raise errors instead of warnings for
-                         plaintext keys. Useful in CI/CD pipelines.
+                         missing keys. Useful in CI/CD pipelines.
         """
         self._resolved: dict[str, ResolvedKey] = {}
         self._strict_mode = strict_mode
@@ -339,8 +331,7 @@ class ApiKeyVault:
         """Resolve an API key from config settings dict.
 
         This is the primary method used by the config loader.
-        It checks api_key_env first, then falls back to plaintext api_key
-        with a deprecation warning.
+        It checks api_key_env and resolves via environment variable or .env file.
 
         Args:
             settings: Driver settings dict from TOML config
@@ -351,38 +342,11 @@ class ApiKeyVault:
         """
         api_key_env = settings.get("api_key_env", "")
 
-        # 1. Try environment variable (if api_key_env is specified)
+        # Try environment variable (if api_key_env is specified)
         if api_key_env:
             resolved = self.resolve(api_key_env)
             if resolved.found:
                 return resolved
-
-        # 2. Fallback to plaintext api_key (DEPRECATED)
-        api_key = settings.get("api_key", "")
-        if api_key:
-            provider = detect_api_key_provider(api_key)
-            result = ResolvedKey(
-                key=api_key,
-                source="plaintext",
-                env_var=api_key_env,
-                provider=provider,
-                is_plaintext=True,
-            )
-
-            # Emit deprecation warning
-            msg = (
-                f"DEPRECATED: api_key in plain text for driver '{full_name}'. "
-                f"Use api_key_env instead. "
-                f"Plain text api_key will be removed in v2.0."
-            )
-            if self._strict_mode:
-                raise SecurityError(msg)
-            else:
-                warnings.warn(msg, DeprecationWarning, stacklevel=3)
-                logger.warning(msg)
-
-            self._resolved[full_name or "plaintext"] = result
-            return result
 
         # No key found
         if api_key_env:
@@ -394,7 +358,7 @@ class ApiKeyVault:
         else:
             logger.debug(
                 f"No API key configured for driver '{full_name}'. "
-                f"Specify api_key_env or api_key in the config."
+                f"Specify api_key_env in the config."
             )
 
         return ResolvedKey(source="none", env_var=api_key_env)
@@ -480,14 +444,6 @@ class ApiKeyVault:
         findings: list[SecurityFinding] = []
 
         for name, resolved in self._resolved.items():
-            if resolved.is_plaintext:
-                findings.append(SecurityFinding(
-                    severity=SecuritySeverity.CRITICAL,
-                    message=f"Plaintext API key found for '{name}'",
-                    location=name,
-                    recommendation="Use api_key_env to reference an environment variable instead",
-                ))
-
             if resolved.found:
                 strength_warnings = self.validate_key_strength(resolved.key)
                 for w in strength_warnings:
@@ -513,10 +469,8 @@ class ApiKeyVault:
 
     def __repr__(self) -> str:
         count = len(self._resolved)
-        plaintext_count = sum(1 for r in self._resolved.values() if r.is_plaintext)
         return (
             f"ApiKeyVault(keys={count}, "
-            f"plaintext={plaintext_count}, "
             f"strict_mode={self._strict_mode})"
         )
 
@@ -527,24 +481,13 @@ def audit_config_security(config: dict[str, Any]) -> list[SecurityFinding]:
     """Audit a TOML config dict for API key security issues.
 
     Scans the config for:
-    - Plaintext API keys (api_key field with non-empty value)
     - Missing api_key_env for drivers
-    - Weak or placeholder keys
-    - Keys that match known API key formats
 
     Args:
         config: Raw TOML config dict (as loaded by tomllib)
 
     Returns:
         List of SecurityFinding objects, sorted by severity
-
-    Examples:
-        >>> issues = audit_config_security(raw_config)
-        >>> critical = [i for i in issues if i.severity == SecuritySeverity.CRITICAL]
-        >>> if critical:
-        ...     print("SECURITY ISSUES FOUND:")
-        ...     for issue in critical:
-        ...         print(f"  {issue}")
     """
     findings: list[SecurityFinding] = []
 
@@ -552,30 +495,15 @@ def audit_config_security(config: dict[str, Any]) -> list[SecurityFinding]:
     if not drivers_section:
         return findings
 
-    # Handle both new format and old format
-    for protocol, identities_or_settings in drivers_section.items():
-        if not isinstance(identities_or_settings, dict):
+    for protocol, identities in drivers_section.items():
+        if not isinstance(identities, dict):
             continue
 
-        # Detect if this is new format (nested) or old format (flat)
-        is_nested = False
-        for _key, value in identities_or_settings.items():
-            if isinstance(value, dict) and (
-                "model" in value or "base_url" in value or "api_key" in value or "api_key_env" in value
-            ):
-                is_nested = True
-                break
-
-        if is_nested:
-            # New format: [drivers.protocol.identity]
-            for identity, settings in identities_or_settings.items():
-                if not isinstance(settings, dict):
-                    continue
-                full_name = f"{protocol}.{identity}"
-                _audit_driver_settings(settings, full_name, findings)
-        else:
-            # Old format: [drivers.name]
-            _audit_driver_settings(identities_or_settings, protocol, findings)
+        for identity, settings in identities.items():
+            if not isinstance(settings, dict):
+                continue
+            full_name = f"{protocol}.{identity}"
+            _audit_driver_settings(settings, full_name, findings)
 
     # Sort by severity (CRITICAL first)
     severity_order = {
@@ -600,42 +528,10 @@ def _audit_driver_settings(
         full_name: Fully qualified driver name
         findings: List to append findings to
     """
-    api_key = settings.get("api_key", "")
     api_key_env = settings.get("api_key_env", "")
 
-    # Check for plaintext API key
-    if api_key:
-        provider = detect_api_key_provider(api_key)
-        provider_info = f" (detected: {provider})" if provider else ""
-        findings.append(SecurityFinding(
-            severity=SecuritySeverity.CRITICAL,
-            message=f"Plaintext API key found for driver '{full_name}'{provider_info}",
-            location=f"drivers.{full_name}.api_key",
-            recommendation=(
-                f"Remove api_key from config and use api_key_env instead. "
-                f"Add: api_key_env = \"{api_key_env or 'YOUR_KEY_ENV_VAR'}\" "
-                f"to [drivers.{full_name}] in agent.toml"
-            ),
-        ))
-
-        # Check for weak keys
-        if len(api_key) < 20:
-            findings.append(SecurityFinding(
-                severity=SecuritySeverity.WARNING,
-                message=f"API key for '{full_name}' appears too short ({len(api_key)} chars)",
-                location=f"drivers.{full_name}.api_key",
-            ))
-
-        # Check for placeholder keys
-        if api_key in ("test", "demo", "example", "placeholder", "your_key_here", "xxx"):
-            findings.append(SecurityFinding(
-                severity=SecuritySeverity.WARNING,
-                message=f"API key for '{full_name}' appears to be a placeholder",
-                location=f"drivers.{full_name}.api_key",
-            ))
-
-    # Check for missing api_key_env (if no api_key either)
-    if not api_key and not api_key_env:
+    # Check for missing api_key_env
+    if not api_key_env:
         findings.append(SecurityFinding(
             severity=SecuritySeverity.INFO,
             message=f"Driver '{full_name}' has no API key configured",
@@ -644,18 +540,6 @@ def _audit_driver_settings(
                 f"Add api_key_env = \"YOUR_KEY_ENV_VAR\" to [drivers.{full_name}] "
                 f"in agent.toml"
             ),
-        ))
-
-    # If api_key_env is set but api_key is also set, recommend removing api_key
-    if api_key and api_key_env:
-        findings.append(SecurityFinding(
-            severity=SecuritySeverity.WARNING,
-            message=(
-                f"Driver '{full_name}' has both api_key and api_key_env set. "
-                f"The api_key_env takes precedence over plaintext api_key. "
-                f"Remove api_key and use api_key_env only."
-            ),
-            location=f"drivers.{full_name}",
         ))
 
 

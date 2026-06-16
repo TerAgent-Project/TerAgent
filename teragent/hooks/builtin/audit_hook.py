@@ -30,6 +30,9 @@ from teragent.hooks.manager import (
     HookResult,
     PythonHook,
 )
+from teragent.security.audit import AuditLogger
+
+_audit_logger = AuditLogger()
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +160,7 @@ class AuditHook(PythonHook):
         如果不可用则降级为 logger.info()
         """
         try:
-            from teragent.security.audit import log_audit
-            await log_audit(action, details)
+            await _audit_logger.log_audit(action, details)
         except Exception as e:
             logger.info(f"[AUDIT] {action}: {details} (db_error: {e})")
 

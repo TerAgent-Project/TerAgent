@@ -7,7 +7,7 @@ Comprehensive E2E tests for Phase 3:
   4. Cost optimization E2E (budget exhaustion → auto-downgrade)
   5. Degradation E2E (circuit breaker → fallback)
   6. Pipeline switch E2E (profile switching at runtime)
-  7. GLM-5.2 + 5V-Turbo coordination E2E (vision → code → verify)
+  7. (REMOVED) GLM-5.2 + 5V-Turbo coordination E2E — deprecated; see orchestration
   8. All compilers still work (regression)
 
 All tests use MockAdapter — no real API calls.
@@ -44,11 +44,8 @@ from teragent.router.model_router import (
     RoutingReason,
     RoutingTable,
 )
-from teragent.coordination.glm5v_coordinator import (
-    CoordinationConfig,
-    CoordinationPhase,
-    GLM52VCoordinatedWorkflow,
-)
+# NOTE: teragent.coordination is deprecated; coordination E2E tests removed.
+# See teragent.orchestration for the replacement.
 
 
 # ===== Helpers =====
@@ -682,127 +679,10 @@ class TestPipelineSwitchE2E:
 
 
 # =====================================================================
-# 7. GLM-5.2 + 5V-Turbo Coordination E2E
+# 7. GLM-5.2 + 5V-Turbo Coordination E2E — REMOVED
+#    Coordination module is deprecated; tests removed.
+#    See teragent.orchestration for the replacement.
 # =====================================================================
-
-
-class TestCoordinationE2E:
-    """End-to-end tests for GLM-5.2 + GLM-5V-Turbo coordination workflow."""
-
-    def setup_method(self):
-        self.vision_provider = _create_mock_provider(
-            "glm_5v_turbo", "glm-5v-turbo", mode="analysis",
-        )
-        self.coding_provider = _create_mock_provider(
-            "glm_52", "glm-5.2",
-        )
-
-    @pytest.mark.asyncio
-    async def test_sequential_coordination_e2e(self):
-        """Sequential coordination: vision → code with multimodal input."""
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=self.vision_provider,
-            coding_provider=self.coding_provider,
-            config=CoordinationConfig(mode="sequential"),
-        )
-        request = TAPRequest(
-            meta={"task_id": "coord.seq", "intent": "execute"},
-            instruction="根据设计稿实现页面",
-            multimodal_context=[
-                MultimodalContent(type="image_url", url="https://example.com/design.png"),
-            ],
-        )
-        result = await workflow.execute(request)
-
-        assert result.success is True
-        assert result.vision_analysis is not None
-        assert result.final_response is not None
-        phases = [s.phase for s in result.steps]
-        assert CoordinationPhase.VISION_ANALYSIS.value in phases
-        assert CoordinationPhase.CODE_GENERATION.value in phases
-
-    @pytest.mark.asyncio
-    async def test_verify_coordination_e2e(self):
-        """Verify coordination: vision → code → visual verification."""
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=self.vision_provider,
-            coding_provider=self.coding_provider,
-            config=CoordinationConfig(mode="verify", max_verification_rounds=1),
-        )
-        request = TAPRequest(
-            meta={"task_id": "coord.verify", "intent": "execute"},
-            instruction="根据设计稿实现页面并验证一致性",
-            multimodal_context=[
-                MultimodalContent(type="image_url", url="https://example.com/design.png"),
-            ],
-        )
-        result = await workflow.execute(request)
-
-        assert result.success is True
-        phases = [s.phase for s in result.steps]
-        assert CoordinationPhase.VISUAL_VERIFICATION.value in phases
-
-    @pytest.mark.asyncio
-    async def test_parallel_coordination_e2e(self):
-        """Parallel coordination: vision || code simultaneously."""
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=self.vision_provider,
-            coding_provider=self.coding_provider,
-            config=CoordinationConfig(mode="parallel"),
-        )
-        request = TAPRequest(
-            meta={"task_id": "coord.par", "intent": "execute"},
-            instruction="根据设计稿实现页面",
-            multimodal_context=[
-                MultimodalContent(type="image_url", url="https://example.com/design.png"),
-            ],
-        )
-        result = await workflow.execute(request)
-
-        assert result.success is True
-        assert result.final_response is not None
-
-    @pytest.mark.asyncio
-    async def test_coordination_no_multimodal_coding_only(self):
-        """Coordination without multimodal content goes directly to coding."""
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=self.vision_provider,
-            coding_provider=self.coding_provider,
-        )
-        request = TAPRequest(
-            meta={"task_id": "coord.text", "intent": "execute"},
-            instruction="实现排序函数",
-        )
-        result = await workflow.execute(request)
-
-        assert result.success is True
-        # No multimodal → coding only, single step
-        assert len(result.steps) == 1
-        assert result.steps[0].phase == CoordinationPhase.CODE_GENERATION.value
-
-    @pytest.mark.asyncio
-    async def test_coordination_degradation_e2e(self):
-        """Coordination degrades when vision provider fails."""
-        config = CoordinationConfig(
-            degrade_on_vision_failure=True,
-            vision_compiler="",
-        )
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=None,
-            coding_provider=self.coding_provider,
-            config=config,
-        )
-        request = TAPRequest(
-            meta={"task_id": "coord.deg", "intent": "execute"},
-            instruction="根据设计稿实现页面",
-            multimodal_context=[
-                MultimodalContent(type="image_url", url="https://example.com/design.png"),
-            ],
-        )
-        result = await workflow.execute(request)
-
-        assert result.is_degraded is True
-        assert result.final_response is not None
 
 
 # =====================================================================

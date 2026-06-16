@@ -441,29 +441,74 @@ results, stats = await executor.execute_batch_fallback(tool_calls)
 can_stream = executor.can_stream_with_tools(model)
 ```
 
-## 协调模块（`teragent.coordination`）
+## 编排模块（`teragent.orchestration`）
 
-### SubAgentManager
+### Agent
 
 ```python
-from teragent.coordination import SubAgentManager, AgentMode
+from teragent.orchestration import Agent, Handoff
 
-manager = SubAgentManager(event_bus, model, tool_registry, message_bus)
+agent = Agent(
+    name="code_reviewer",
+    provider=provider,
+    tools=[review_tool, lint_tool],
+    handoffs=[
+        Handoff(target_agent="editor", tool_name="transfer_to_editor"),
+    ],
+)
+```
 
-# Sync: block until done
-result = await manager.spawn("Analyze code quality", mode=AgentMode.SYNC)
+### Orchestrator
 
-# Async: run in background
-agent_id = await manager.spawn("Background refactoring", mode=AgentMode.ASYNC)
+```python
+from teragent.orchestration import Orchestrator, OrchestrationMode
 
-# FORK: shared prefix (KV cache optimization)
-result = await manager.spawn("Quick query", mode=AgentMode.FORK)
+orchestrator = Orchestrator(
+    agents=[designer, planner, coder, reviewer],
+    mode=OrchestrationMode.SEQUENTIAL,
+)
 
-# Management
-status = manager.get_status(agent_id)
-agents = manager.list_active_agents()
-await manager.stop(agent_id)
-await manager.stop_all()
+# 运行编排
+result = await orchestrator.run("构建用户管理 REST API")
+
+# 流式编排
+async for event in orchestrator.run_stream("构建 REST API"):
+    print(event)
+```
+
+### Handoff
+
+```python
+from teragent.orchestration import Handoff, HandoffInputFilter
+
+handoff = Handoff(
+    target_agent="reviewer",
+    tool_name="transfer_to_reviewer",
+    input_filter=HandoffInputFilter.remove_all_tools,
+)
+```
+
+### SharedState
+
+```python
+from teragent.orchestration import SharedState
+
+state = SharedState()
+state.set("key", "value", scope="session")
+value = state.get("key", scope="session")
+```
+
+### CancellationToken
+
+```python
+from teragent.orchestration import CancellationToken
+
+token = CancellationToken()
+# 请求取消
+token.cancel()
+# 检查是否已取消
+if token.is_cancelled:
+    print("已取消！")
 ```
 
 ## 工具模块（`teragent.tools`）

@@ -113,9 +113,10 @@ model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
 long_horizon_enabled = true
-dual_thinking_enabled = true
-preserved_thinking_enabled = true
-context_degradation_enabled = true
+multimodal_enabled = true
+# Note: dual_thinking_enabled, preserved_thinking_enabled are
+# create_provider() kwargs, not TOML driver fields.
+# Context degradation is handled internally by the AutoCompactor.
 
 # Route long-horizon to the appropriate model
 [routing]
@@ -226,7 +227,7 @@ from teragent.core.tap import LongHorizonConfig
 
 request = TAPRequest(
     instruction="Refactor the entire authentication module to use OAuth2",
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=2,
         checkpoint_interval_minutes=10,
     ),
@@ -247,7 +248,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,  # Enable PreservedThinking
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
 
 manager = LongHorizonTaskManager(
@@ -367,7 +368,7 @@ request = TAPRequest(
     meta={
         "thinking_mode": "max",  # Use Max thinking for evaluation steps
     },
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=6,
     ),
 )
@@ -391,12 +392,12 @@ For tasks running 8+ hours, context degradation is critical:
 
 ```toml
 [drivers.openai_compatible.glm_52]
-context_degradation_enabled = true
+# Context degradation is handled internally by the AutoCompactor
 ```
 
 The degradation behavior:
 1. Start at 1M context
-2. When NPU memory exceeds 90%, degrade to 200K
+2. When memory usage exceeds the threshold, degrade to 200K
 3. Existing context is compacted (preserve system prompt, recent messages, tool definitions)
 4. When memory pressure subsides, recover to 1M
 
@@ -555,12 +556,13 @@ report = tracker.get_report()
 ### Context Degradation Monitoring
 
 ```python
-from teragent.reliability.context_degradation import ContextDegradationMonitor
+from teragent.context import ContextWindow
 
-monitor = ContextDegradationMonitor(model_name="glm_52")
-state = monitor.get_state()
-print(f"Context mode: {state.current_mode}")  # "1M" or "200K"
-print(f"NPU utilization: {state.npu_utilization:.1%}")
+# The ContextWindow tracks utilization
+utilization = context_window.usage_ratio()
+print(f"Context utilization: {utilization:.1%}")
+if utilization > 0.9:
+    print("⚠️ Context utilization high, consider enabling auto-compaction")
 ```
 
 ### Circuit Breaker Integration

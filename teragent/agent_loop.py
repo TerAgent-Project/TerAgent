@@ -22,7 +22,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from teragent.orchestration.agent import Agent
 
 __all__ = [
     "AgentLoop",
@@ -31,8 +34,8 @@ __all__ = [
 from teragent.config.agent_loop_config import AgentLoopConfig
 from teragent.context.auto_compact import AutoCompactor
 from teragent.context.context_window import ContextWindow
-from teragent.coordination.message_bus import BROADCAST, AgentMessage, AgentMessageBus
-from teragent.coordination.sub_agent_manager import AgentMode, SubAgentManager
+# NOTE: teragent.coordination is deprecated; sub-agent coordination
+# is now provided by teragent.orchestration.Orchestrator.
 from teragent.core.provider import ModelProvider
 from teragent.core.tap import LongHorizonConfig, TAPRequest
 from teragent.core.types import Message, MessageRole, MessageType
@@ -77,8 +80,8 @@ class AgentLoop:
 
     def __init__(
         self,
-        model: ModelProvider,
-        tool_registry: ToolRegistry,
+        model: ModelProvider | None = None,
+        tool_registry: ToolRegistry | None = None,
         config: AgentLoopConfig | None = None,
         event_bus: EventBus | None = None,
         context_window: ContextWindow | None = None,
@@ -89,16 +92,40 @@ class AgentLoop:
         permission_manager: EnhancedPermissionManager | None = None,
         intent_classifier: IntentClassifier | None = None,
         confirmation_gate: ConfirmationGate | None = None,
-        message_bus: AgentMessageBus | None = None,
-        sub_agent_manager: SubAgentManager | None = None,
         hook_manager: HookManager | None = None,
         session_persistence: SessionPersistence | None = None,
         streaming_executor: StreamingToolExecutor | None = None,
         long_horizon_manager: LongHorizonTaskManager | None = None,
         model_router: ModelRouter | None = None,
         cost_tracker: CrossModelCostTracker | None = None,
+        agent: Agent | None = None,
     ) -> None:
+        # --- Agent-based initialization (Phase 1 W3) ---
+        if agent is not None:
+            # Build provider from agent
+            provider = agent.resolve_provider()
+            if model is None:
+                model = provider
+            # Build tool registry from agent tools
+            if tool_registry is None:
+                tool_registry = ToolRegistry()
+                for tool in agent.tools:
+                    tool_registry.register(tool)
+            # Override config with agent's max_steps if not explicitly configured
+            if config is None:
+                config = AgentLoopConfig(max_tool_steps=agent.max_steps)
+
         # --- Core dependencies ---
+        if model is None:
+            raise ValueError(
+                "AgentLoop requires either a 'model' (ModelProvider) or 'agent' parameter. "
+                "Pass agent=Agent(...) or model=ModelProvider(...) explicitly."
+            )
+        if tool_registry is None:
+            raise ValueError(
+                "AgentLoop requires either a 'tool_registry' or 'agent' parameter. "
+                "Pass agent=Agent(...) or tool_registry=ToolRegistry() explicitly."
+            )
         self._model = model
         self._tool_registry = tool_registry
         self._config = config or AgentLoopConfig()
@@ -113,8 +140,8 @@ class AgentLoop:
         self._permission_manager = permission_manager
         self._intent_classifier = intent_classifier
         self._confirmation_gate = confirmation_gate
-        self._message_bus = message_bus
-        self._sub_agent_manager = sub_agent_manager
+        self._message_bus = None        # deprecated: use Orchestrator instead
+        self._sub_agent_manager = None   # deprecated: use Orchestrator instead
         self._hook_manager = hook_manager
         self._session_persistence = session_persistence
         self._streaming_executor = streaming_executor
@@ -229,7 +256,7 @@ class AgentLoop:
           2. If CREATE_PROJECT, confirm via gate
           3. Filter tools by intent
           4. Prepend/replace system prompt
-          5. If CREATE_PROJECT, delegate to SubAgentManager
+          5. If CREATE_PROJECT, delegate to Orchestrator (was SubAgentManager)
           6. Restore session state (if applicable)
           7. Execute tool loop until done
           8. Emit agent_done event
@@ -307,53 +334,9 @@ class AgentLoop:
                 messages.insert(0, Message.system_prompt(system_prompt))
 
         # 5b. SubAgent delegation for CREATE_PROJECT intent
-        if intent == IntentType.CREATE_PROJECT and self._sub_agent_manager:
-            try:
-                result = await self._sub_agent_manager.spawn(
-                    task=user_input,
-                    mode=AgentMode.SYNC,
-                    parent_id="main_agent",
-                )
-                messages.append(Message.assistant_text(result))
-                logger.info(
-                    f"SubAgent completed CREATE_PROJECT task: "
-                    f"result_length={len(result)}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"SubAgent spawn failed, falling back to tool loop: {e}"
-                )
-                # Fall through to normal tool loop on SubAgent failure
-            else:
-                # SubAgent succeeded — skip tool loop, go to session persistence
-                elapsed = time.time() - start_time
-                if self._event_bus:
-                    await self._event_bus.emit(
-                        "agent_done",
-                        intent=intent.value,
-                        total_steps=self._total_steps,
-                        elapsed_seconds=round(elapsed, 2),
-                        final_message_count=len(messages),
-                    )
-
-                # Persist session (full lifecycle)
-                if self._session_persistence:
-                    try:
-                        session_id = self._session_persistence.get_current_session_id()
-                        if not session_id:
-                            session_id = self._session_persistence.create(
-                                title=user_input[:50],
-                                intent=intent.value if intent else "unknown",
-                            )
-                        for msg in messages:
-                            self._session_persistence.save_message(session_id, msg)
-                        self._session_persistence.update_step_count(
-                            session_id, self._total_steps
-                        )
-                    except Exception as e:
-                        logger.debug(f"Session persistence error: {e}")
-
-                return messages
+        # NOTE: SubAgentManager is deprecated; delegation now handled by Orchestrator.
+        # When Orchestrator is integrated, insert delegation logic here and
+        # return early (similar to the old SubAgentManager pattern).
 
         # 5c. Session restore (before tool loop)
         session_id = None
@@ -603,21 +586,8 @@ class AgentLoop:
                         tool_name, had_effect
                     )
 
-                # Notify message bus of tool result
-                if self._message_bus:
-                    try:
-                        await self._message_bus.send(AgentMessage(
-                            from_agent="main",
-                            to_agent=BROADCAST,
-                            message_type="tool_result",
-                            content=json.dumps({
-                                "tool": tool_name,
-                                "success": result.success,
-                                "call_id": call_id,
-                            }),
-                        ))
-                    except Exception:
-                        pass  # Message bus failure must not block the tool loop
+                # NOTE: message bus notification removed (coordination deprecated)
+                # Use Orchestrator events for inter-agent communication.
 
             # Per-iteration failure tracking (not per-tool)
             iteration_failed = any(not r.success for _, r in batch_results)

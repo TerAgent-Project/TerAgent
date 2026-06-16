@@ -68,7 +68,10 @@ __all__ = [
     "PermissionRule",
 ]
 
+from teragent.security.audit import AuditLogger
 from teragent.utils.exceptions import PermissionDenied
+
+_audit_logger = AuditLogger()
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +130,9 @@ class PermissionManager:
             try:
                 import asyncio
 
-                from teragent.security.audit import log_audit
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(log_audit(
+                    loop.create_task(_audit_logger.log_audit(
                         "permission_elevate",
                         f"From {self.current_level.name} to {new_level.name}"
                     ))
@@ -474,21 +476,6 @@ class EnhancedPermissionManager:
         """获取 AI 权限分类器"""
         return self._ai_classifier
 
-    @ai_classifier.setter
-    def ai_classifier(self, value: Any | None) -> None:
-        """设置 AI 权限分类器
-
-        DEPRECATED (Phase 0.5): Use EnhancedPermissionManager(ai_classifier=...) instead.
-
-        Args:
-            value: AIPermissionClassifier 实例或 None
-        """
-        self._ai_classifier = value
-        if value is not None:
-            logger.info("AI permission classifier enabled")
-        else:
-            logger.info("AI permission classifier disabled")
-
     # ===== 权限检查（同步） =====
 
     def check(self, tool_name: str, path: str = "") -> tuple[bool, str]:
@@ -739,9 +726,8 @@ class EnhancedPermissionManager:
             try:
                 import asyncio
 
-                from teragent.security.audit import log_audit
                 loop = asyncio.get_running_loop()
-                loop.create_task(log_audit(
+                loop.create_task(_audit_logger.log_audit(
                     "permission_downgrade",
                     f"Level changed: {current.name} → {level.name}"
                 ))

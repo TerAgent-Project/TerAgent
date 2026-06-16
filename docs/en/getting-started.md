@@ -90,24 +90,35 @@ report, data = teragent.run_deterministic_checks("/project", task_list)
 ```python
 from teragent import AgentLoop, ModelProvider, ToolRegistry
 from teragent.config import AgentLoopConfig
-from teragent.reliability import CircuitBreakerManager, StepBudget
+from teragent.reliability import CircuitBreakerManager, StepBudget, RecoveryManager
 from teragent.security import EnhancedPermissionManager
 from teragent.context import ContextWindow, AutoCompactor
 from teragent.intent import IntentClassifier
 from teragent.streaming import StreamingToolExecutor
+from teragent.hooks import HookManager
+from teragent.session import SessionPersistence
 
 # Build the agent loop with all cross-cutting concerns
 loop = AgentLoop(
     model=provider,
     tool_registry=my_tool_registry,
     config=AgentLoopConfig(),
-    circuit_breaker=CircuitBreakerManager(),
-    step_budget=StepBudget(max_steps=50),
-    permission_manager=EnhancedPermissionManager(),
+    event_bus=None,
     context_window=ContextWindow(model_token_limit=128_000),
     auto_compactor=AutoCompactor(context_window=..., model=provider),
+    step_budget=StepBudget(max_steps=50),
+    circuit_breaker=CircuitBreakerManager(),
+    recovery_manager=RecoveryManager(),
+    permission_manager=EnhancedPermissionManager(),
     intent_classifier=IntentClassifier(provider),
+    confirmation_gate=None,
+    hook_manager=HookManager(),
+    session_persistence=SessionPersistence(),
     streaming_executor=StreamingToolExecutor(my_tool_registry),
+    long_horizon_manager=None,
+    model_router=None,
+    cost_tracker=None,
+    agent=None,
 )
 
 # Run the agent

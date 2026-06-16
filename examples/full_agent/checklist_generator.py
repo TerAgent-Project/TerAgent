@@ -108,11 +108,10 @@ class ChecklistGenerator:
         await self.bus.emit("checklist_ready", fallback)
 
     def _get_workspace_root(self) -> str | None:
-        """Get workspace root from constructor or EventBus shared state."""
+        """Get workspace root from constructor or environment."""
         if self._workspace_root:
             return self._workspace_root
-        if hasattr(self.bus, '_shared') and 'workspace_root' in self.bus._shared:
-            return self.bus._shared['workspace_root']
+        # NOTE: EventBus._shared was removed; use constructor injection instead.
         return os.environ.get("TERAGENT_WORKSPACE")
 
     def _generate_fallback_checklist(self, plan: Any) -> str:

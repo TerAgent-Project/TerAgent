@@ -16,12 +16,243 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
+from typing import Literal
 
 import teragent
+from teragent.core.adapters.mock import MockAdapter
+from teragent.core.compiler import TAPCompilerRegistry
+from teragent.core.provider import ModelProvider
 from teragent.core.tap import LongHorizonConfig, MultimodalContent, TAPRequest
 from teragent.reliability.budget import CrossModelCostTracker, MonthlyBudgetConfig
-from teragent.router.model_router import ModelRouter, PipelineProfile, RoutingTable
+from teragent.reliability.circuit_breaker import BreakerState
+from teragent.router.model_router import ModelRouter
+from teragent.utils.text import strip_code_block
 
+
+# ======================================================================
+# Inline GLM-5V-Turbo + GLM-5.2 coordinated workflow
+# (teragent.coordination.glm5v_coordinator module is not shipped in the
+# public package; this lightweight inline implementation demonstrates the
+# "vision → code" coordination pattern using the public teragent API.)
+# ======================================================================
+
+CoordinationMode = Literal["sequential", "verify"]
+
+
+@dataclass
+class CoordinationConfig:
+    """Configuration for the GLM-5V-Turbo + GLM-5.2 coordinated workflow.
+
+    Attributes:
+        mode: "sequential" (vision → code) or "verify" (vision → code → verify)
+        context_sharing: Whether to pass the vision analysis to the coding model
+        inject_code_generation_hint: Whether to append a code-generation hint
+        max_verification_rounds: Max number of verify→fix iterations
+        verification_score_threshold: Score threshold (0-10) below which we re-fix
+    """
+
+    mode: CoordinationMode = "sequential"
+    context_sharing: bool = True
+    inject_code_generation_hint: bool = True
+    max_verification_rounds: int = 1
+    verification_score_threshold: float = 7.0
+
+
+@dataclass
+class CoordinationStep:
+    """A single step in the coordinated workflow."""
+    phase: str
+    model: str
+    success: bool = True
+    output: str = ""
+
+
+@dataclass
+class VisionAnalysisResult:
+    """Structured output of the vision (GLM-5V-Turbo) stage."""
+    raw_analysis: str = ""
+    confidence: float = 0.0
+
+
+@dataclass
+class VerificationResult:
+    """Structured output of the verification stage."""
+    score: float = 0.0
+    notes: str = ""
+    passed: bool = False
+
+
+@dataclass
+class CoordinatedWorkflowResult:
+    """Aggregate result of the coordinated workflow."""
+    phase: str = "completed"
+    success: bool = True
+    steps: list[CoordinationStep] = field(default_factory=list)
+    vision_analysis: VisionAnalysisResult | None = None
+    verification_result: VerificationResult | None = None
+    final_response: TAPResponse | None = None  # noqa: F821 — forward ref
+
+
+# Resolve the forward reference now that TAPResponse is available.
+from teragent.core.tap import TAPResponse  # noqa: E402
+
+
+class GLM52VCoordinatedWorkflow:
+    """Coordinate GLM-5V-Turbo (vision) with GLM-5.2 (coding).
+
+    Sequential mode:  vision → code
+    Verify mode:      vision → code → (verify → fix)*
+
+    This is a minimal reference implementation intended for examples use only.
+    """
+
+    def __init__(
+        self,
+        vision_provider: ModelProvider,
+        coding_provider: ModelProvider,
+        config: CoordinationConfig | None = None,
+    ) -> None:
+        self.vision_provider = vision_provider
+        self.coding_provider = coding_provider
+        self.config = config or CoordinationConfig()
+
+    async def execute(self, request: TAPRequest) -> CoordinatedWorkflowResult:
+        result = CoordinatedWorkflowResult(phase="vision", steps=[])
+
+        # --- Stage 1: Vision analysis with GLM-5V-Turbo ---
+        vision_request = TAPRequest(
+            meta={**request.meta, "intent": "review"},
+            instruction=(
+                "请分析提供的图像/设计稿，提取布局结构、颜色方案、UI 元素清单和交互逻辑，"
+                "为后续代码生成提供结构化上下文。"
+            ),
+            multimodal_context=request.multimodal_context,
+            constraints=request.constraints,
+        )
+        try:
+            vision_resp = await self.vision_provider.execute_tap(vision_request)
+            raw_analysis = strip_code_block(vision_resp.raw_text or "")
+            # crude confidence heuristic: longer, more structured analysis → higher
+            confidence = min(1.0, len(raw_analysis) / 1500.0)
+            result.vision_analysis = VisionAnalysisResult(
+                raw_analysis=raw_analysis,
+                confidence=confidence,
+            )
+            result.steps.append(CoordinationStep(
+                phase="vision", model="glm-5v-turbo",
+                success=bool(raw_analysis), output=raw_analysis[:200],
+            ))
+        except Exception as e:  # pragma: no cover — example only
+            result.steps.append(CoordinationStep(
+                phase="vision", model="glm-5v-turbo", success=False, output=str(e),
+            ))
+            result.success = False
+            result.phase = "vision_failed"
+            return result
+
+        # --- Stage 2: Code generation with GLM-5.2 ---
+        coding_context = {}
+        if self.config.context_sharing and result.vision_analysis:
+            coding_context["design"] = result.vision_analysis.to_context_string() \
+                if hasattr(result.vision_analysis, "to_context_string") \
+                else f"<visual_analysis>\n{result.vision_analysis.raw_analysis}\n</visual_analysis>"
+
+        instruction = request.instruction
+        if self.config.inject_code_generation_hint:
+            instruction = (
+                f"{instruction}\n\n"
+                "请基于上方视觉分析结果生成实现代码，严格遵循布局、颜色和交互逻辑。"
+            )
+
+        code_request = TAPRequest(
+            meta={**request.meta, "intent": "execute"},
+            context=coding_context,
+            instruction=instruction,
+            constraints=request.constraints,
+            output_format_hint=request.output_format_hint,
+        )
+        try:
+            code_resp = await self.coding_provider.execute_tap(code_request)
+            result.final_response = code_resp
+            result.steps.append(CoordinationStep(
+                phase="code", model="glm-5.2",
+                success=bool(code_resp.raw_text),
+                output=(code_resp.raw_text or "")[:200],
+            ))
+        except Exception as e:  # pragma: no cover — example only
+            result.steps.append(CoordinationStep(
+                phase="code", model="glm-5.2", success=False, output=str(e),
+            ))
+            result.success = False
+            result.phase = "code_failed"
+            return result
+
+        # --- Stage 3 (verify mode only): Verification loop ---
+        if self.config.mode == "verify":
+            for round_idx in range(self.config.max_verification_rounds):
+                result.phase = f"verify_round_{round_idx + 1}"
+                verify_request = TAPRequest(
+                    meta={**request.meta, "intent": "review"},
+                    instruction=(
+                        "请验证上方生成的代码是否与原始设计稿一致。"
+                        "给出 0-10 的总体评分，并指出差异。"
+                    ),
+                    multimodal_context=request.multimodal_context,
+                    context={"plan": result.final_response.raw_text or ""},
+                )
+                try:
+                    verify_resp = await self.vision_provider.execute_tap(verify_request)
+                    verify_text = verify_resp.raw_text or ""
+                    score = _extract_score(verify_text)
+                    passed = score >= self.config.verification_score_threshold
+                    result.verification_result = VerificationResult(
+                        score=score, notes=verify_text[:300], passed=passed,
+                    )
+                    result.steps.append(CoordinationStep(
+                        phase=f"verify_{round_idx + 1}", model="glm-5v-turbo",
+                        success=True, output=f"score={score:.1f}",
+                    ))
+                    if passed:
+                        break
+                except Exception as e:  # pragma: no cover
+                    result.steps.append(CoordinationStep(
+                        phase=f"verify_{round_idx + 1}", model="glm-5v-turbo",
+                        success=False, output=str(e),
+                    ))
+                    break
+
+        result.phase = "completed"
+        return result
+
+
+def _extract_score(text: str) -> float:
+    """Best-effort extraction of a numeric score (0-10) from verification text."""
+    import re
+    # Look for patterns like "总体评分: 8.5" or "Score: 8.5/10"
+    m = re.search(r"(?:总体评分|score|评分|Score)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
+    if m:
+        try:
+            return min(10.0, max(0.0, float(m.group(1))))
+        except ValueError:
+            pass
+    return 0.0
+
+
+# Add the missing to_context_string method via monkey-patch for example use.
+# (VisionAnalysisResult defined above is a plain dataclass for example purposes.)
+def _vision_to_context_string(self: VisionAnalysisResult) -> str:
+    if self.raw_analysis:
+        return f"<visual_analysis>\n{self.raw_analysis}\n</visual_analysis>"
+    return ""
+
+
+VisionAnalysisResult.to_context_string = _vision_to_context_string  # type: ignore[attr-defined]
+
+
+# ======================================================================
+# Demo functions
+# ======================================================================
 
 async def demo_multi_model_compilation() -> None:
     """Demo 1: Same request, different compilers → different optimized prompts"""
@@ -259,8 +490,6 @@ async def demo_degradation() -> None:
     print("Demo 5: Degradation Strategy")
     print("=" * 70)
 
-    from teragent.reliability.circuit_breaker import BreakerState
-
     router = ModelRouter()
 
     # Simulate V4-Pro circuit breaker being open
@@ -354,85 +583,82 @@ async def demo_multimodal_agent_flow() -> None:
 
 
 async def demo_5v_turbo_coordination() -> None:
-    """Demo 7: GLM-5V-Turbo + GLM-5.2 coordinated workflow"""
+    """Demo 7: GLM-5V-Turbo + GLM-5.2 coordinated workflow
+
+    Uses the inline `GLM52VCoordinatedWorkflow` defined at the top of this
+    module — teragent.coordination.glm5v_coordinator is not part of the
+    public package, so we ship a minimal reference implementation here.
+    """
     print("\n" + "=" * 70)
     print("Demo 7: GLM-5V-Turbo + GLM-5.2 Vision→Code Coordination")
     print("=" * 70)
-
-    from teragent.coordination.glm5v_coordinator import (
-        GLM52VCoordinatedWorkflow,
-        CoordinationConfig,
-        CoordinationMode,
-    )
-    from teragent.core.adapters.mock import MockAdapter
-    from teragent.core.compiler import TAPCompilerRegistry
-    from teragent.core.provider import ModelProvider
 
     # Create vision and coding providers
     vision_compiler_cls = TAPCompilerRegistry.get("glm_5v_turbo")
     coding_compiler_cls = TAPCompilerRegistry.get("glm_52")
 
-    if vision_compiler_cls and coding_compiler_cls:
-        vision_provider = ModelProvider(
-            compiler=vision_compiler_cls(mode="analysis"),
-            adapter=MockAdapter(),
-            model="glm-5v-turbo",
-        )
-        coding_provider = ModelProvider(
-            compiler=coding_compiler_cls(),
-            adapter=MockAdapter(),
-            model="glm-5.2",
-        )
-
-        # Sequential mode: Vision → Code
-        config_seq = CoordinationConfig(
-            mode="sequential",
-            context_sharing=True,
-            inject_code_generation_hint=True,
-        )
-        workflow = GLM52VCoordinatedWorkflow(
-            vision_provider=vision_provider,
-            coding_provider=coding_provider,
-            config=config_seq,
-        )
-
-        request = TAPRequest(
-            meta={"task_id": "coord-1", "intent": "execute"},
-            instruction="Implement this design as a React component",
-            multimodal_context=[
-                MultimodalContent(type="image_url", url="https://example.com/design-mock.png")
-            ],
-            constraints=["React 18+", "TypeScript"],
-        )
-
-        result = await workflow.execute(request)
-        print(f"\n  [Sequential] Phase: {result.phase}")
-        print(f"  [Sequential] Success: {result.success}")
-        print(f"  [Sequential] Steps: {len(result.steps)}")
-        if result.vision_analysis:
-            print(f"  [Sequential] Vision analysis confidence: {result.vision_analysis.confidence:.2f}")
-        if result.final_response:
-            print(f"  [Sequential] Code output preview: {result.final_response.raw_text[:80]}...")
-
-        # Verify mode: Vision → Code → Verify
-        config_verify = CoordinationConfig(
-            mode="verify",
-            max_verification_rounds=1,
-            verification_score_threshold=7.0,
-        )
-        workflow_verify = GLM52VCoordinatedWorkflow(
-            vision_provider=vision_provider,
-            coding_provider=coding_provider,
-            config=config_verify,
-        )
-
-        result_verify = await workflow_verify.execute(request)
-        print(f"\n  [Verify] Phase: {result_verify.phase}")
-        print(f"  [Verify] Steps: {len(result_verify.steps)}")
-        if result_verify.verification_result:
-            print(f"  [Verify] Verification done: True")
-    else:
+    if not (vision_compiler_cls and coding_compiler_cls):
         print("  (Skipping: GLM-5V-Turbo or GLM-5.2 compiler not available)")
+        return
+
+    vision_provider = ModelProvider(
+        compiler=vision_compiler_cls(mode="analysis"),
+        adapter=MockAdapter(),
+        model="glm-5v-turbo",
+    )
+    coding_provider = ModelProvider(
+        compiler=coding_compiler_cls(),
+        adapter=MockAdapter(),
+        model="glm-5.2",
+    )
+
+    # Sequential mode: Vision → Code
+    config_seq = CoordinationConfig(
+        mode="sequential",
+        context_sharing=True,
+        inject_code_generation_hint=True,
+    )
+    workflow = GLM52VCoordinatedWorkflow(
+        vision_provider=vision_provider,
+        coding_provider=coding_provider,
+        config=config_seq,
+    )
+
+    request = TAPRequest(
+        meta={"task_id": "coord-1", "intent": "execute"},
+        instruction="Implement this design as a React component",
+        multimodal_context=[
+            MultimodalContent(type="image_url", url="https://example.com/design-mock.png")
+        ],
+        constraints=["React 18+", "TypeScript"],
+    )
+
+    result = await workflow.execute(request)
+    print(f"\n  [Sequential] Phase: {result.phase}")
+    print(f"  [Sequential] Success: {result.success}")
+    print(f"  [Sequential] Steps: {len(result.steps)}")
+    if result.vision_analysis:
+        print(f"  [Sequential] Vision analysis confidence: {result.vision_analysis.confidence:.2f}")
+    if result.final_response:
+        print(f"  [Sequential] Code output preview: {result.final_response.raw_text[:80]}...")
+
+    # Verify mode: Vision → Code → Verify
+    config_verify = CoordinationConfig(
+        mode="verify",
+        max_verification_rounds=1,
+        verification_score_threshold=7.0,
+    )
+    workflow_verify = GLM52VCoordinatedWorkflow(
+        vision_provider=vision_provider,
+        coding_provider=coding_provider,
+        config=config_verify,
+    )
+
+    result_verify = await workflow_verify.execute(request)
+    print(f"\n  [Verify] Phase: {result_verify.phase}")
+    print(f"  [Verify] Steps: {len(result_verify.steps)}")
+    if result_verify.verification_result:
+        print(f"  [Verify] Verification done: True (score={result_verify.verification_result.score:.1f})")
 
 
 async def main() -> None:

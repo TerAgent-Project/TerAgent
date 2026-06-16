@@ -123,3 +123,80 @@ design_driver = "openai_compatible.deepseek_v4_pro"
 plan_driver = "openai_compatible.glm_5"
 execute_driver = "openai_compatible.glm_5"
 review_driver = "openai_compatible.deepseek_v4_pro"
+
+[execution.pipeline.profiles.long_horizon]
+description = "长程任务：所有阶段使用 GLM-5（8h 自治模式）"
+design_driver = "openai_compatible.glm_5"
+plan_driver = "openai_compatible.glm_5"
+execute_driver = "openai_compatible.glm_5"
+review_driver = "openai_compatible.glm_5"
+
+# =============================================================================
+# 熔断器配置
+# =============================================================================
+[circuit_breaker.budget]
+max_session_tokens = 10_000_000              # 单次会话最大 token 预算
+warning_threshold = 0.7                       # 70% 时警告
+critical_threshold = 0.9                      # 90% 时严重警告
+enable_hard_limit = false                     # 是否硬性截断
+
+[circuit_breaker.failure_breaker]
+max_consecutive = 5                           # 最大连续失败次数
+window_seconds = 300                          # 观察窗口 5 分钟
+
+[circuit_breaker.latency_breaker]
+warn_latency_ms = 30000                       # 延迟警告阈值 30s
+
+[circuit_breaker.progress_detector]
+stall_threshold = 10                          # 停滞检测阈值
+
+# =============================================================================
+# 上下文管理配置
+# =============================================================================
+[context_management]
+model_token_limit = 128_000                   # 默认上下文窗口 128K
+compaction_threshold = 0.8                    # 80% 时触发压缩
+retain_count = 8                              # 压缩时保留最近 8 条消息
+max_compacts = 5                              # 单会话最大压缩次数
+
+# =============================================================================
+# 权限配置
+# =============================================================================
+[permission]
+mode = "default"                              # default/plan/bypass/accept_edits/auto
+rules = {}                                    # 自定义规则（allow/deny 列表）
+
+# =============================================================================
+# 工具配置
+# =============================================================================
+[tools]
+max_concurrent = 10                           # 最大并发工具数
+
+# =============================================================================
+# 流式配置
+# =============================================================================
+[streaming]
+mode = "auto"                                 # auto/streaming/batch
+max_concurrent = 10                           # 流式并发上限
+
+# =============================================================================
+# 会话配置
+# =============================================================================
+[session]
+db_path = ".agent/sessions.db"                # SQLite 会话存储路径
+enabled = true                                # 启用会话持久化
+
+# =============================================================================
+# 文件安全配置
+# =============================================================================
+[file_safety]
+workspace_root = "."                          # 工作空间根目录
+enable_2pc = true                             # 启用两阶段提交（原子写入）
+max_file_size = 10_485_760                    # 单文件最大 10MB
+
+# =============================================================================
+# 模型降级配置
+# =============================================================================
+[model.fallback]
+driver = "openai_compatible.deepseek_v4_flash"  # 降级到 V4-Flash
+model = "deepseek-v4-flash"

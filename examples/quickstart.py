@@ -164,7 +164,8 @@ async def step5_cost_tracking(provider: teragent.ModelProvider) -> None:
         await provider.execute_tap_with_retry(request, max_retries=1)
 
     # Get the cost summary — shows total tokens, call count, and per-provider breakdown
-    summary = provider.get_cost_summary()
+    # NOTE: get_cost_summary() is async — must be awaited.
+    summary = await provider.get_cost_summary()
     print(f"  Total calls:          {summary['total_calls']}")
     print(f"  Total prompt tokens:  {summary['total_prompt_tokens']}")
     print(f"  Total completion tokens: {summary['total_completion_tokens']}")

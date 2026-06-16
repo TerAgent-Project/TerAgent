@@ -97,7 +97,11 @@ class PlanGenerator:
         try:
             clean_content = await self._generate_with_retry(tap_request)
             logger.warning("Replan generated. Replacing entire plan for M2 simplicity.")
-            await self.bus.emit("plan_ready", clean_content)
+            # Emit a distinct "replan_ready" event so downstream consumers can
+            # differentiate a replanned plan from an initial plan. Consumers
+            # that only care about "any new plan" can subscribe to both
+            # "plan_ready" and "replan_ready".
+            await self.bus.emit("replan_ready", clean_content)
             logger.info(f"Replan generated successfully ({len(clean_content)} chars)")
         except Exception as e:
             logger.error(f"Replan generation failed after all retries: {e}")
@@ -139,9 +143,12 @@ def _validate_plan(plan_content: str) -> list[str]:
     if "### " not in content:
         errors.append("No task headers (###) found in plan")
 
+    # Accept the correct term "输出文件排他声明" plus the common LLM-output
+    # variant "输出文件声明" (without the "排他" qualifier). The earlier
+    # "排它" / "排再" entries were typos and have been removed.
     has_output_decl = any(
         kw in content
-        for kw in ("输出文件排他声明", "输出文件排它声明", "输出文件排再声明")
+        for kw in ("输出文件排他声明", "输出文件声明")
     )
     if not has_output_decl:
         errors.append("No output file declarations found in plan")

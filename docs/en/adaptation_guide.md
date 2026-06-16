@@ -157,11 +157,10 @@ compiler = "glm_52"
 max_context_tokens = 1_000_000          # GLM-5.2 supports 1M context
 max_output_tokens = 128_000
 thinking_mode = "high"                  # Default: "high" (vs "max" for deep)
-dual_thinking_enabled = true            # Enable High/Max dual thinking mode
-preserved_thinking_enabled = true       # Enable PreservedThinking for coding plans
-vision_coordination_enabled = true      # Enable 5V-Turbo vision coordination
+multimodal_enabled = true               # Enable multimodal (vision coordination)
 long_horizon_enabled = true             # GLM-5.2 also supports long-horizon
-context_degradation_enabled = true      # Auto-downgrade 1M → 200K under pressure
+# Note: dual_thinking, preserved_thinking, vision_coordination, context_degradation
+# are create_provider() kwargs, not TOML driver fields.
 
 # =============================================================================
 # Execution Pipeline — Multi-model collaboration
@@ -403,7 +402,7 @@ glm_provider_native = create_provider(
 # Long-horizon task configuration
 request = TAPRequest(
     instruction="Implement a complete user management system with auth, roles, and audit logging",
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=4,
         checkpoint_interval_minutes=15,
         evaluation_interval_steps=10,
@@ -446,7 +445,7 @@ glm52_provider_native = create_provider(
 # 1M context with dual thinking
 request = TAPRequest(
     instruction="Analyze this entire codebase and design a migration plan to microservices",
-    long_horizon_config=LongHorizonConfig(
+    long_horizon=LongHorizonConfig(
         max_duration_hours=6,
         checkpoint_interval_minutes=20,
     ),
@@ -496,7 +495,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    preserved_thinking_enabled=True,
+    preserved_thinking_enabled=True,  # compiler-level kwarg
 )
 
 # First request: create a coding plan
@@ -519,7 +518,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
+    vision_coordination_enabled=True,  # compiler-level kwarg
 )
 
 # Vision→Code→Verify cycle
@@ -584,9 +583,10 @@ api_key_env = "GLM_API_KEY"
 model = "glm-5.2"
 compiler = "glm_52"
 max_context_tokens = 1_000_000
-dual_thinking_enabled = true
-preserved_thinking_enabled = true
-vision_coordination_enabled = true
+thinking_mode = "high"
+multimodal_enabled = true
+# Note: preserved_thinking_enabled and vision_coordination_enabled
+# are create_provider() kwargs, not TOML driver fields.
 ```
 
 ### Step 2: Update Pipeline Configuration
@@ -718,7 +718,7 @@ provider = create_provider(
     compiler="glm_52",
     adapter="openai_compatible",
     model="glm-5.2",
-    vision_coordination_enabled=True,
+    vision_coordination_enabled=True,  # compiler-level kwarg
 )
 
 request = TAPRequest(
@@ -817,31 +817,31 @@ GLM-5 has a 200K token context window. If your request exceeds this:
 
 If the 1M context consumes too much memory:
 
-**Solution**: Enable `context_degradation_enabled = true` in the GLM-5.2 driver configuration. This allows automatic downgrade to 200K context under memory pressure. Also ensure the inference server has sufficient NPU memory (recommended: Ascend 910B x2 for 1M context).
+**Solution**: Context degradation is handled internally by the AutoCompactor. Ensure `max_context_tokens = 1_000_000` is set in the GLM-5.2 driver configuration. Also ensure your inference endpoint has sufficient resources for 1M context.
 
 ### Dual Thinking Mode Not Activating
 
 If the thinking mode doesn't switch between High and Max:
 
-**Solution**: Verify `dual_thinking_enabled = true` is set in the driver configuration. Check that the `GLM52Compiler` is registered and selected. The thinking mode can be set via `thinking_mode` in the driver config or overridden per-request via `meta={"thinking_mode": "max"}`.
+**Solution**: Dual thinking is controlled via `thinking_mode` in the driver config (TOML field) or per-request via `meta={"thinking_mode": "max"}`. The `dual_thinking_enabled` kwarg is for `create_provider()` only (compiler-level), not a TOML field. Check that the `GLM52Compiler` is registered and selected.
 
 ### 5V-Turbo Coordination Fails
 
 If vision coordination between GLM-5V-Turbo and GLM-5.2 isn't working:
 
-**Solution**: Ensure `vision_coordination_enabled = true` is set. Check that the GLM-5V-Turbo service is accessible. Verify that the `GLM52Compiler` supports vision coordination mode. If 5V-Turbo is unavailable, the system will degrade to text-only analysis.
+**Solution**: `vision_coordination_enabled` is a `create_provider()` kwarg, not a TOML field. In TOML, use `multimodal_enabled = true` on the GLM-5.2 driver. Check that the GLM-5V-Turbo service is accessible. Verify that the `GLM52Compiler` supports vision coordination mode. If 5V-Turbo is unavailable, the system will degrade to text-only analysis.
 
 ### PreservedThinking Context Lost
 
 If PreservedThinking loses context between sessions:
 
-**Solution**: PreservedThinking is designed for within-session continuity, not cross-session persistence. For cross-session work, include the plan summary in the goal description of the new session. Check that `preserved_thinking_enabled = true` is set.
+**Solution**: PreservedThinking is designed for within-session continuity, not cross-session persistence. For cross-session work, include the plan summary in the goal description of the new session. `preserved_thinking_enabled` is a `create_provider()` kwarg (not a TOML field); pass it when creating the provider programmatically.
 
 ### Multimodal Content Not Processed
 
 If M3 is not available, multimodal content is degraded to text descriptions by other compilers.
 
-**Solution**: Ensure the M3 driver is configured and the API key is valid. Check routing configuration. For GLM-5.2 with vision, enable `vision_coordination_enabled = true`.
+**Solution**: Ensure the M3 driver is configured and the API key is valid. Check routing configuration. For GLM-5.2 with vision, pass `vision_coordination_enabled=True` to `create_provider()` or set `multimodal_enabled = true` in TOML.
 
 ### High Costs Despite Budget Configuration
 
@@ -885,7 +885,7 @@ manager = ModelCircuitBreakerManager(configs=[
 
 ### Context Degradation Not Triggering on GLM-5.2
 
-**Solution**: Ensure `context_degradation_enabled = true` in the driver config. The degradation is triggered when NPU memory utilization exceeds the threshold. Check that the inference server reports memory pressure correctly. The degradation log will show the downgrade event.
+**Solution**: Context degradation is handled internally by the AutoCompactor. Ensure `max_context_tokens = 1_000_000` is set in the driver config. The AutoCompactor triggers degradation when memory utilization exceeds the threshold. Check that your inference endpoint reports memory pressure correctly. The degradation log will show the downgrade event.
 
 ---
 
@@ -917,17 +917,6 @@ Degradation:      [degradation]
 Long-horizon:     [long_horizon]
 Profiles:         [execution.pipeline.profiles.<name>]
 ```
-
-### Port Allocation (Local Deployment)
-
-| Port | Service |
-|------|---------|
-| 8001 | GLM-5 inference |
-| 8002 | DeepSeek V4 Flash inference |
-| 8003 | MiniMax M3 inference |
-| 8004 | GLM-5.2 inference |
-| 8005 | DeepSeek V4 Pro inference |
-| 8010 | Desktop operations API |
 
 ---
 
